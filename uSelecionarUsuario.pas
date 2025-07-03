@@ -18,6 +18,7 @@ type
     procedure FormShow(Sender: TObject);
     procedure grdUsuariosDblClick(Sender: TObject);
     procedure btnSelecionarClick(Sender: TObject);
+    procedure FormDestroy(Sender: TObject); // Adicionado FormDestroy
   private
     { Private declarations }
     FIDEmpresaContexto: Integer;
@@ -35,9 +36,51 @@ type
 var
   frmSelecionarUsuario: TfrmSelecionarUsuario;
 
+// Função auxiliar para extrair campos de uma string delimitada
+function GetDelimitedField(const SourceString: string; Delimiter: Char; FieldIndex: Integer): string;
+
 implementation
 
 {$R *.dfm}
+
+function GetDelimitedField(const SourceString: string; Delimiter: Char; FieldIndex: Integer): string;
+var
+  P: Integer;
+  CurrentIndex: Integer;
+  TempStr: string;
+  StartPos: Integer; // Não utilizado na lógica atual, mas comum em outras implementações
+begin
+  Result := '';
+  if FieldIndex < 1 then Exit;
+
+  TempStr := SourceString;
+  CurrentIndex := 1;
+
+  while (CurrentIndex <= FieldIndex) and (TempStr <> '') do
+  begin
+    P := Pos(Delimiter, TempStr);
+    if P = 0 then // Último campo ou único campo
+    begin
+      if CurrentIndex = FieldIndex then
+        Result := TempStr;
+      TempStr := ''; // Força saída do loop
+    end
+    else
+    begin
+      if CurrentIndex = FieldIndex then
+      begin
+        Result := Copy(TempStr, 1, P - 1);
+        TempStr := ''; // Força saída do loop
+      end
+      else
+      begin
+        // Remove o campo atual e o delimitador para processar o próximo
+        TempStr := Copy(TempStr, P + 1, Length(TempStr));
+      end;
+    end;
+    Inc(CurrentIndex);
+  end;
+end;
 
 { TfrmSelecionarUsuario }
 
@@ -46,27 +89,18 @@ begin
   IDUsuarioSelecionado := 0;
   NomeUsuarioSelecionado := '';
   FUsuariosParaCopiaData := TStringList.Create;
+end;
 
-  // Configuração do TDBGrid (exemplo, se usando ClientDataSet real)
-  // Colunas para grdUsuarios:
-  // 1. Título 'ID', FieldName 'ID_USUARIO', Visível=False (ou como preferir)
-  // 2. Título 'Nome do Usuário', FieldName 'NOME', Width=350
+procedure TfrmSelecionarUsuario.FormDestroy(Sender: TObject); // Implementação do Destructor
+begin
+  FUsuariosParaCopiaData.Free;
+  inherited Destroy; // Chama o destructor da classe pai
 end;
 
 procedure TfrmSelecionarUsuario.FormShow(Sender: TObject);
 begin
-  // A carga de dados é feita via CarregarUsuariosParaCopia antes do ShowModal
-  if FUsuariosParaCopiaData.Count = 0 then // Se não carregou dados
-     SimularCargaUsuariosParaCopia; // Carga de exemplo
-
-  // Popular o grid (simulação, pois não temos ClientDataSet aqui)
-  // Em um caso real, o TClientDataSet já estaria populado e conectado ao TDBGrid via TDataSource.
-  // Para simulação, poderíamos usar um TStringGrid se não quisermos simular TClientDataSet.
-  // Por ora, o TDBGrid ficará vazio nesta simulação sem um TDataSet por trás.
-  // Ou, poderíamos popular um TListView ou TListBox.
-  // Para simplificar a simulação do DFM, o TDBGrid foi adicionado, mas a lógica de população
-  // direta sem um DataSet é mais complexa.
-  // Assumindo que o controller popularia um cdsUsuariosCopia.
+  if FUsuariosParaCopiaData.Count = 0 then
+     SimularCargaUsuariosParaCopia;
 
   if FUsuariosParaCopiaData.Count > 0 then
     btnSelecionar.Enabled := True
@@ -75,16 +109,11 @@ begin
 end;
 
 procedure TfrmSelecionarUsuario.SimularCargaUsuariosParaCopia;
-var
-  i: Integer;
-  UsuarioInfo: TStringList;
+//var
+  // i: Integer; // Não usado na simulação atual
+  // UsuarioInfo: TStringList; // Não usado na simulação atual
 begin
-  // Limpa o grid ou a fonte de dados do grid
-  // grdUsuarios.Columns.Clear; // Se fosse um StringGrid
-  // Se fosse ClientDataSet: cdsUsuariosCopia.EmptyDataSet;
-
   FUsuariosParaCopiaData.Clear;
-  // Exemplo: Carregaria todos os usuários da FIDEmpresaContexto, exceto FIDUsuarioAtual
   if FIDEmpresaContexto = 1 then
   begin
     if FIDUsuarioAtual <> 101 then FUsuariosParaCopiaData.Add('101|Usuário Alpha');
@@ -97,40 +126,18 @@ begin
     if FIDUsuarioAtual <> 202 then FUsuariosParaCopiaData.Add('202|Usuário Delta');
   end;
 
-  // Popularia o cdsUsuariosCopia com os dados de FUsuariosParaCopiaData
-  // Exemplo conceitual de como seria com ClientDataSet:
-  {
-  cdsUsuariosCopia.Close;
-  cdsUsuariosCopia.FieldDefs.Clear;
-  cdsUsuariosCopia.FieldDefs.Add('ID_USUARIO', ftInteger);
-  cdsUsuariosCopia.FieldDefs.Add('NOME', ftString, 100);
-  cdsUsuariosCopia.CreateDataSet;
-  cdsUsuariosCopia.Open;
-
-  UsuarioInfo := TStringList.Create;
-  try
-    for i := 0 to FUsuariosParaCopiaData.Count - 1 do
-    begin
-      UsuarioInfo.Delimiter := '|';
-      UsuarioInfo.DelimitedText := FUsuariosParaCopiaData[i];
-      if UsuarioInfo.Count = 2 then
-      begin
-        cdsUsuariosCopia.Append;
-        cdsUsuariosCopia.FieldByName('ID_USUARIO').AsInteger := StrToInt(UsuarioInfo[0]);
-        cdsUsuariosCopia.FieldByName('NOME').AsString := UsuarioInfo[1];
-        cdsUsuariosCopia.Post;
-      end;
-    end;
-  finally
-    UsuarioInfo.Free;
-  end;
-  }
-  // Como estamos sem ClientDataSet, o TDBGrid não mostrará dados.
-  // Para um teste funcional mínimo sem TClientDataSet, um TListBox seria mais simples.
-  // Ex:
-  // lbUsuarios.Items.Clear;
-  // for i := 0 to FUsuariosParaCopiaData.Count -1 do
-  //   lbUsuarios.Items.Add(ExtractDelimited(2, FUsuariosParaCopiaData[i], ['|']));
+  // Aqui seria a lógica para popular o TClientDataSet (cdsUsuariosCopia)
+  // e o TDBGrid o exibiria. Como não temos o CDS, o grid ficará vazio.
+  // Para teste visual sem CDS, um TListBox ou TStringGrid seria mais direto de popular.
+  // Exemplo de como seria com TListBox (se existisse um 'lbUsuarios' no form):
+  (*
+  lbUsuarios.Items.Clear;
+  for i := 0 to FUsuariosParaCopiaData.Count - 1 do
+    lbUsuarios.Items.AddObject(
+      GetDelimitedField(FUsuariosParaCopiaData[i], '|', 2), // Nome
+      TObject(StrToIntDef(GetDelimitedField(FUsuariosParaCopiaData[i], '|', 1),0)) // ID
+    );
+  *)
 end;
 
 
@@ -138,33 +145,41 @@ procedure TfrmSelecionarUsuario.CarregarUsuariosParaCopia(AIDEmpresa, AIDUsuario
 begin
   FIDEmpresaContexto := AIDEmpresa;
   FIDUsuarioAtual := AIDUsuarioAIgnorar;
-  // Em uma implementação real, aqui você chamaria o Controller para buscar os usuários
-  // e popular o ClientDataSet (cdsUsuariosCopia).
-  SimularCargaUsuariosParaCopia; // Para este exemplo, usamos a simulação
+  SimularCargaUsuariosParaCopia;
 end;
 
 procedure TfrmSelecionarUsuario.grdUsuariosDblClick(Sender: TObject);
+var
+  DataLinhaSimulada: string; // Para simulação
 begin
+  // Lógica real com TDBGrid e DataSet:
   // if cdsUsuariosCopia.RecordCount > 0 then
   //   btnSelecionar.Click;
-  // Como não temos cdsUsuariosCopia, esta parte é conceitual.
-  // Se estivéssemos usando um ListBox:
-  // if lbUsuarios.ItemIndex <> -1 then btnSelecionar.Click;
-  ShowMessage('Simulação: Duplo clique no grid. Selecionaria o usuário.');
-  // Para simular, vamos pegar o primeiro da lista de simulação se houver
+
+  // Simulação, pois não temos cdsUsuariosCopia populado:
+  // Vamos simular a seleção do primeiro usuário da lista de simulação
   if FUsuariosParaCopiaData.Count > 0 then
   begin
-    IDUsuarioSelecionado := StrToInt(ExtractDelimited(1, FUsuariosParaCopiaData[0], ['|']));
-    NomeUsuarioSelecionado := ExtractDelimited(2, FUsuariosParaCopiaData[0], ['|']);
-    ModalResult := mrOk;
+    DataLinhaSimulada := FUsuariosParaCopiaData[0]; // Pega o primeiro para o exemplo
+    IDUsuarioSelecionado := StrToIntDef(GetDelimitedField(DataLinhaSimulada, '|', 1), 0);
+    NomeUsuarioSelecionado := GetDelimitedField(DataLinhaSimulada, '|', 2);
+    if IDUsuarioSelecionado > 0 then // Verifica se conseguiu um ID válido
+        ModalResult := mrOk
+    else
+        ShowMessage('Erro ao obter dados do usuário selecionado (simulação).');
+  end
+  else
+  begin
+    ShowMessage('Nenhum usuário para selecionar por duplo clique (simulação).');
   end;
 end;
 
 procedure TfrmSelecionarUsuario.btnSelecionarClick(Sender: TObject);
 var
-  IDStr, NomeStr: string;
+  DataLinhaSimulada: string; // Para simulação
 begin
-  // if cdsUsuariosCopia.RecordCount > 0 then
+  // Lógica real com TDBGrid e DataSet:
+  // if cdsUsuariosCopia.Active and (cdsUsuariosCopia.RecordCount > 0) then
   // begin
   //   IDUsuarioSelecionado := cdsUsuariosCopia.FieldByName('ID_USUARIO').AsInteger;
   //   NomeUsuarioSelecionado := cdsUsuariosCopia.FieldByName('NOME').AsString;
@@ -173,37 +188,31 @@ begin
   // else
   // begin
   //   ShowMessage('Nenhum usuário selecionado.');
-  //   ModalResult := mrNone; // Permanece no form
+  //   ModalResult := mrNone;
   // end;
 
-  // Simulação sem ClientDataSet:
-  // Se estivesse usando um ListBox:
-  // if lbUsuarios.ItemIndex <> -1 then
-  // begin
-  //   ExtractStrings(['|'], [], PChar(FUsuariosParaCopiaData[lbUsuarios.ItemIndex]), IDStr, NomeStr);
-  //   IDUsuarioSelecionado := StrToIntDef(IDStr, 0);
-  //   NomeUsuarioSelecionado := NomeStr;
-  //   ModalResult := mrOk;
-  // end else ...
-
-  // Para simular, vamos pegar o primeiro da lista de simulação se houver
+  // Simulação, pois não temos cdsUsuariosCopia populado:
+  // Vamos simular a seleção do primeiro usuário da lista de simulação
+  // Em um cenário real com TDBGrid, você pegaria o registro corrente do DataSet.
   if FUsuariosParaCopiaData.Count > 0 then
   begin
-    IDUsuarioSelecionado := StrToInt(ExtractDelimited(1, FUsuariosParaCopiaData[0], ['|']));
-    NomeUsuarioSelecionado := ExtractDelimited(2, FUsuariosParaCopiaData[0], ['|']);
-    ModalResult := mrOk;
+    DataLinhaSimulada := FUsuariosParaCopiaData[0]; // Pega o primeiro para o exemplo
+    IDUsuarioSelecionado := StrToIntDef(GetDelimitedField(DataLinhaSimulada, '|', 1), 0);
+    NomeUsuarioSelecionado := GetDelimitedField(DataLinhaSimulada, '|', 2);
+
+    if IDUsuarioSelecionado > 0 then // Verifica se conseguiu um ID válido
+        ModalResult := mrOk
+    else
+    begin
+        ShowMessage('Erro ao obter dados do usuário selecionado (simulação).');
+        ModalResult := mrNone; // Permanece no form
+    end;
   end
   else
   begin
     ShowMessage('Nenhum usuário disponível para selecionar.');
-    ModalResult := mrNone;
+    ModalResult := mrNone; // Permanece no form
   end;
-end;
-
-destructor TfrmSelecionarUsuario.Destroy;
-begin
-  FUsuariosParaCopiaData.Free;
-  inherited Destroy;
 end;
 
 end.
