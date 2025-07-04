@@ -63,7 +63,7 @@ type
 
     procedure CarregarEmpresas;
     procedure CarregarUsuarios(AIDEmpresa: Integer);
-    procedure LimparPermissoesVisuais;
+    procedure LimparPermissoesVisuais; // Declaração já existia
     procedure PopularTreeView;
     procedure AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
     procedure AtualizarChecksPermissaoParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
@@ -164,6 +164,24 @@ begin
   begin
      btnCarregarPermissoes.Enabled := False;
   end;
+end;
+
+// IMPLEMENTAÇÃO DE LimparPermissoesVisuais
+procedure TfrmGerenciarPermissoes.LimparPermissoesVisuais;
+begin
+  chkAcesso.Checked := False;
+  chkInserir.Checked := False;
+  chkAlterar.Checked := False;
+  chkExcluir.Checked := False;
+  chkImprimir.Checked := False;
+
+  chkInserir.Enabled := False;
+  chkAlterar.Enabled := False;
+  chkExcluir.Enabled := False;
+  chkImprimir.Enabled := False;
+
+  gbPermissoesItem.Enabled := False;
+  gbPermissoesItem.Caption := 'Permissões para o item selecionado';
 end;
 
 procedure TfrmGerenciarPermissoes.SimularCargaEmpresas;
@@ -566,7 +584,7 @@ begin
         if Assigned(FPermissaoController) then
         begin
           if FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions) then
-            AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions) // CORRIGIDO
+            AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions)
           else
             MemoLog.Lines.Add('Falha ao recarregar permissões em tvMenuSelectionChanged.');
         end;
