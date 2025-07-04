@@ -14,11 +14,6 @@ type
   end;
   PItemMenuData = ^TItemMenuData;
 
-  // Declaração de TArrayOfUserPermissionItem movida para cá ou para uma unit comum
-  // Se uPermissaoController já a define e está na uses clause, não precisa redefinir.
-  // Para este exemplo, vamos assumir que ela é necessária aqui se uPermissaoController não for usado diretamente ainda.
-  // No entanto, a boa prática seria ter essa definição em um local comum ou em uPermissaoController.
-  // Se uPermissaoController for usado, esta declaração pode ser removida daqui.
   _TUserPermissionItem = record // Renomeado temporariamente para evitar conflito se uPermissaoController for usado
     ItemID: Integer;
     ItemTipo: Char;
@@ -69,8 +64,7 @@ type
     procedure FormDestroy(Sender: TObject);
   private
     { Private declarations }
-    // FPermissaoController: TPermissaoController; // Descomentar quando usar o controller real
-    FPermissaoControllerSimulado: TObject; // Placeholder para manter compilação
+    FPermissaoControllerSimulado: TObject;
     FPermissoesModificadas: Boolean;
 
     procedure CarregarEmpresas;
@@ -88,7 +82,7 @@ type
     FEmpresasData: TStringList;
     FUsuariosData: TStringList;
     FMenuEstrutura: TStringList;
-    FPermissoesUsuarioAtual: TStringList; // Formato: "TIPO_ITEM|ID_ITEM|ACESSO(0/1)|INSERIR(0/1)|ALTERAR(0/1)|EXCLUIR(0/1)|IMPRIMIR(0/1)"
+    FPermissoesUsuarioAtual: TStringList;
 
     procedure SimularCargaEmpresas;
     procedure SimularCargaUsuarios(AIDEmpresa: Integer);
@@ -106,7 +100,7 @@ var
 
 implementation
 
- uses uPermissaoController; // Assume que uPermissaoController define TArrayOfUserPermissionItem
+ uses uPermissaoController;
 
 {$R *.dfm}
 
@@ -487,7 +481,12 @@ begin
 end;
 
 procedure TfrmGerenciarPermissoes.tvMenuSelectionChanged(Sender: TObject);
-begin if Assigned(tvMenu.Selected) then AktualizarChecksPermissaoParaNo(tvMenu.Selected) else LimparPermissoesVisuais; end;
+begin
+  if Assigned(tvMenu.Selected) then
+    AtualizarChecksPermissaoParaNo(tvMenu.Selected) // CORRIGIDO
+  else
+    LimparPermissoesVisuais;
+end;
 
 procedure TfrmGerenciarPermissoes.chkPermissaoClick(Sender: TObject);
 var NodeData: PItemMenuData; PermItemID: Integer; PermItemTipo: Char; i: Integer; PermInfo: TStringList; Found: Boolean; NovaLinhaPermissao: string;
@@ -526,9 +525,9 @@ procedure TfrmGerenciarPermissoes.btnSalvarPermissoesClick(Sender: TObject);
 var
   IDEmpresa, IDUsuario: Integer;
   PermInfo: TStringList;
-  PermLinha: string; // Declarada
-  UserPerms: TArrayOfUserPermissionItem; // Declarada, usa a definição de uPermissaoController
-  idx: Integer; // Declarada
+  PermLinha: string;
+  UserPerms: TArrayOfUserPermissionItem;
+  idx: Integer;
 begin
   if not FPermissoesModificadas then begin ShowMessage('Nenhuma permissão foi alterada.'); Exit; end;
   if (cbEmpresa.ItemIndex = -1) or (cbUsuario.ItemIndex = -1) then begin ShowMessage('Selecione uma empresa e um usuário.'); Exit; end;
