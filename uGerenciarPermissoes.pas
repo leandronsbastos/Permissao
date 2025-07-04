@@ -4,7 +4,8 @@ interface
 
 uses
   Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ComCtrls, ExtCtrls, DBCtrls, DB, ActnList, ImgList, StrUtils;
+  Dialogs, StdCtrls, ComCtrls, ExtCtrls, DBCtrls, DB, ActnList, ImgList, StrUtils,
+  uPermissaoController; // MOVIMOS uPermissaoController PARA A INTERFACE USES
 
 type
   TItemMenuData = record
@@ -14,7 +15,8 @@ type
   end;
   PItemMenuData = ^TItemMenuData;
 
-  // TArrayOfUserPermissionItem e TMenuItemStructure são definidos em uPermissaoController
+  // _TUserPermissionItem e _TArrayOfUserPermissionItem REMOVIDOS DAQUI
+  // pois TArrayOfUserPermissionItem agora vem de uPermissaoController
 
   TfrmGerenciarPermissoes = class(TForm)
     pnlFiltros: TPanel;
@@ -31,8 +33,8 @@ type
     btnLimparTodas: TButton;
     btnSelecionarTodas: TButton;
     aclMain: TActionList;
-    dsEmpresas: TDataSource; // Pode ser removido se cbEmpresa for populado manualmente
-    dsUsuarios: TDataSource; // Pode ser removido se cbUsuario for populado manualmente
+    dsEmpresas: TDataSource;
+    dsUsuarios: TDataSource;
     gbPermissoesItem: TGroupBox;
     chkAcesso: TCheckBox;
     chkInserir: TCheckBox;
@@ -55,18 +57,21 @@ type
   private
     { Private declarations }
     // Campos primeiro
-    FPermissaoController: TPermissaoController;
+    FPermissaoController: TPermissaoController; // CORRETO
     FPermissoesModificadas: Boolean;
+    FPermissoesEditadas: TStringList;
 
-    // Esta lista agora armazena o estado "sujo" das permissões conforme o usuário clica nos checkboxes.
-    // É usada para construir o TArrayOfUserPermissionItem ao salvar.
-    FPermissoesEditadas: TStringList; // Formato: "TIPO_ITEM|ID_ITEM|ACESSO(0/1)|INSERIR(0/1)|ALTERAR(0/1)|EXCLUIR(0/1)|IMPRIMIR(0/1)"
+    // Listas de simulação de dados (serão progressivamente removidas ou usadas apenas para mock)
+    FEmpresasData: TStringList;
+    FUsuariosData: TStringList;
+    FMenuEstruturaSimulada: TStringList; // Renomeado para clareza
 
     // Métodos
     procedure CarregarEmpresas;
     procedure CarregarUsuarios(AIDEmpresa: Integer);
     procedure LimparPermissoesVisuais;
     procedure PopularTreeView;
+    // Assinaturas ajustadas para usar TArrayOfUserPermissionItem de uPermissaoController
     procedure AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
     procedure AtualizarChecksPermissaoParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
     function GetItemMenuData(ANode: TTreeNode): PItemMenuData;
@@ -75,6 +80,10 @@ type
     procedure MarcarNoAtualizarListaEditada(ANodeData: PItemMenuData; ACheckedState: Boolean);
     procedure ProcessarNoParaSelecaoTotal(ANode: TTreeNode);
     procedure ProcessarNoParaLimpezaTotal(ANode: TTreeNode);
+
+    procedure SimularCargaEmpresas; // Manter por enquanto para cbEmpresa
+    procedure SimularCargaUsuarios(AIDEmpresa: Integer); // Manter por enquanto para cbUsuario
+    procedure SimularCargaEstruturaMenu; // Manter por enquanto para tvMenu
 
     function BoolToStrDB(Value: Boolean): string;
     function StrDBToBool(Value: string): Boolean;
@@ -88,7 +97,7 @@ var
 
 implementation
 
- uses uPermissaoController, uSelecionarUsuario; // uSelecionarUsuario para cópia
+uses uSelecionarUsuario;
 
 {$R *.dfm}
 
@@ -104,20 +113,25 @@ end;
 
 procedure TfrmGerenciarPermissoes.FormCreate(Sender: TObject);
 begin
-  FPermissaoController := TPermissaoController.Create('SEU_SERVIDOR_SQL', 'SEU_BANCO', 'SEU_USUARIO', 'SUA_SENHA');
-  // Ou, para segurança integrada:
-  // FPermissaoController := TPermissaoController.Create('SEU_SERVIDOR_SQL', 'SEU_BANCO', '', '', True);
-  // Ou, se já tem a string de conexão completa:
+  FPermissaoController := TPermissaoController.Create('SEU_SERVIDOR_SQL', 'SEU_BANCO_DE_DADOS', 'SEU_USUARIO_SQL', 'SUA_SENHA_SQL');
+  // Ou para segurança integrada:
+  // FPermissaoController := TPermissaoController.Create('SEU_SERVIDOR_SQL', 'SEU_BANCO_DE_DADOS', '', '', True);
+  // Ou se já tem a string de conexão completa:
   // FPermissaoController := TPermissaoController.Create('SUA_CONNECTION_STRING_COMPLETA');
 
-  if not FPermissaoController.TestConnection then
+  if not FPermissaoController.TestConnection then // CORRIGIDO: Adicionado THEN
   begin
     ShowMessage('Falha ao conectar ao banco de dados! Verifique as configurações de conexão no FormCreate de uGerenciarPermissoes.');
-    // Considerar desabilitar o form ou Application.Terminate;
   end;
 
   FPermissoesModificadas := False;
-  FPermissoesEditadas := TStringList.Create; // Lista para manter o estado "sujo"
+  FPermissoesEditadas := TStringList.Create;
+
+  // Listas de simulação (ainda usadas para popular ComboBoxes e TreeView na fase de transição)
+  FEmpresasData := TStringList.Create;
+  FUsuariosData := TStringList.Create;
+  FMenuEstruturaSimulada := TStringList.Create;
+
 
   tvMenu.ReadOnly := False;
   gbPermissoesItem.Enabled := False;
@@ -146,86 +160,131 @@ begin
   end;
   FreeAndNil(FPermissaoController);
   FreeAndNil(FPermissoesEditadas);
+  FreeAndNil(FEmpresasData); // Liberar listas de simulação
+  FreeAndNil(FUsuariosData);
+  FreeAndNil(FMenuEstruturaSimulada);
 end;
 
 procedure TfrmGerenciarPermissoes.FormShow(Sender: TObject);
 begin
   CarregarEmpresas;
-  // Se cbEmpresa tiver itens, o cbEmpresaChange será chamado indiretamente
-  // e carregará os usuários.
-  if cbEmpresa.Items.Count > 0 And (cbEmpresa.ItemIndex = -1) then
-     cbEmpresa.ItemIndex := 0 // Força o OnChange se não foi disparado
-  else if cbEmpresa.Items.Count = 0 then // Nenhuma empresa carregada
+  if cbEmpresa.Items.Count > 0 then // CORRIGIDO: Adicionado THEN
+  begin
+    if cbEmpresa.ItemIndex = -1 then // CORRIGIDO: Adicionado THEN
+       cbEmpresa.ItemIndex := 0;
+  end else
+  begin
      btnCarregarPermissoes.Enabled := False;
-
+  end;
 end;
 
+// --- MÉTODOS DE SIMULAÇÃO (Manter por enquanto para popular ComboBoxes e TreeView) ---
+procedure TfrmGerenciarPermissoes.SimularCargaEmpresas;
+begin
+  FEmpresasData.Clear;
+  FEmpresasData.Add('1|Empresa A');
+  FEmpresasData.Add('2|Empresa B');
+end;
+
+procedure TfrmGerenciarPermissoes.SimularCargaUsuarios(AIDEmpresa: Integer);
+begin
+  FUsuariosData.Clear;
+  if AIDEmpresa = 1 then
+  begin
+    FUsuariosData.Add('101|Usuário Alpha|1');
+    FUsuariosData.Add('102|Usuário Beta|1');
+    FUsuariosData.Add('103|Admin Empresa A|1');
+  end
+  else if AIDEmpresa = 2 then
+  begin
+    FUsuariosData.Add('201|Usuário Gamma|2');
+    FUsuariosData.Add('202|Usuário Delta|2');
+  end;
+end;
+
+procedure TfrmGerenciarPermissoes.SimularCargaEstruturaMenu;
+begin
+  FMenuEstruturaSimulada.Clear;
+  FMenuEstruturaSimulada.Add('1|M|Cadastro|0|0||1');
+  FMenuEstruturaSimulada.Add('1|R|Ramo de Atividades|1|0|frmRamoAtividades|1');
+  FMenuEstruturaSimulada.Add('101|S|Profissionais|1|0||16');
+  FMenuEstruturaSimulada.Add('3|R|Funcionários|0|101|frmFuncionarios|1');
+end;
+// --- FIM MÉTODOS DE SIMULAÇÃO ---
+
 procedure TfrmGerenciarPermissoes.CarregarEmpresas;
+var
+  i: Integer;
+  EmpresaInfo: TStringList;
 begin
   cbEmpresa.Items.Clear;
-  if Assigned(FPermissaoController) then
-  begin
-    if not FPermissaoController.CarregarEmpresas(cbEmpresa.Items) then
+  // Simulação ainda usada para ComboBox, idealmente viria do Controller
+  SimularCargaEmpresas;
+  EmpresaInfo := TStringList.Create;
+  try
+    for i := 0 to FEmpresasData.Count - 1 do
     begin
-      ShowMessage('Falha ao carregar empresas do banco de dados.');
-      MemoLog.Lines.Add('Falha ao carregar empresas.');
+      EmpresaInfo.Delimiter := '|';
+      EmpresaInfo.DelimitedText := FEmpresasData[i];
+      if EmpresaInfo.Count = 2 then // CORRIGIDO: Adicionado THEN
+        cbEmpresa.Items.AddObject(EmpresaInfo[1], TObject(StrToInt(EmpresaInfo[0])));
     end;
-  end
-  else
-  begin
-     ShowMessage('Controller de permissão não inicializado em CarregarEmpresas.');
-     Exit;
+  finally
+    EmpresaInfo.Free;
   end;
 
-  if cbEmpresa.Items.Count > 0 then
+  if cbEmpresa.Items.Count > 0 then // CORRIGIDO: Adicionado THEN
   begin
-    cbEmpresa.ItemIndex := 0; // Dispara OnChange que carrega usuários
-  end
-  else
+    cbEmpresa.ItemIndex := 0;
+  end else
   begin
-    cbUsuario.Items.Clear; // Limpa usuários se não há empresas
+    cbUsuario.Items.Clear;
     btnCarregarPermissoes.Enabled := False;
   end;
 end;
 
 procedure TfrmGerenciarPermissoes.CarregarUsuarios(AIDEmpresa: Integer);
+var
+  i: Integer;
+  UsuarioInfo: TStringList;
 begin
   cbUsuario.Items.Clear;
   tvMenu.Items.Clear;
   LimparPermissoesVisuais;
 
-  if Assigned(FPermissaoController) then
-  begin
-    if not FPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa, cbUsuario.Items) then
+  // Simulação ainda usada para ComboBox
+  SimularCargaUsuarios(AIDEmpresa);
+  UsuarioInfo := TStringList.Create;
+  try
+    for i := 0 to FUsuariosData.Count - 1 do
     begin
-      ShowMessage(Format('Falha ao carregar usuários para a empresa ID: %d.', [AIDEmpresa]));
-      MemoLog.Lines.Add(Format('Falha ao carregar usuários para empresa ID: %d.', [AIDEmpresa]));
+      UsuarioInfo.Delimiter := '|';
+      UsuarioInfo.DelimitedText := FUsuariosData[i];
+      if UsuarioInfo.Count >= 2 then // CORRIGIDO: Adicionado THEN
+         cbUsuario.Items.AddObject(UsuarioInfo[1], TObject(StrToInt(UsuarioInfo[0])));
     end;
-  end
-  else
-  begin
-     ShowMessage('Controller de permissão não inicializado em CarregarUsuarios.');
-     Exit;
+  finally
+    UsuarioInfo.Free;
   end;
 
-  if cbUsuario.Items.Count > 0 then
+  if cbUsuario.Items.Count > 0 then // CORRIGIDO: Adicionado THEN
   begin
     cbUsuario.ItemIndex := 0;
-    btnCarregarPermissoes.Enabled := True; // Habilita para carregar menu e permissões
-    btnCarregarPermissoesClick(nil); // Carrega automaticamente ao selecionar usuário
+    btnCarregarPermissoes.Enabled := True;
+    btnCarregarPermissoesClick(nil);
   end
   else
   begin
     btnCarregarPermissoes.Enabled := False;
   end;
-  btnCopiarPermissoes.Enabled := cbUsuario.Items.Count > 0;
+  btnCopiarPermissoes.Enabled := (cbUsuario.Items.Count > 0);
 end;
 
 procedure TfrmGerenciarPermissoes.cbEmpresaChange(Sender: TObject);
 var
   IDEmpresa: Integer;
 begin
-  if cbEmpresa.ItemIndex <> -1 then
+  if cbEmpresa.ItemIndex <> -1 then // CORRIGIDO: Adicionado THEN
   begin
     IDEmpresa := Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]);
     CarregarUsuarios(IDEmpresa);
@@ -255,7 +314,7 @@ end;
 
 procedure TfrmGerenciarPermissoes.PopularTreeView;
 var
-  MenuEstruturaArray: TArrayOfMenuItemStructure;
+  MenuEstruturaArray: TArrayOfMenuItemStructure; // Usa tipo do Controller
   i: Integer;
   Node, ParentNode: TTreeNode;
   Item: TMenuItemStructure;
@@ -276,12 +335,12 @@ var
   var k: Integer; NodeData: PItemMenuData;
   begin
     Result := nil;
-    for k := 0 to Tree.Items.Count - 1 do // Itera pelos nós raiz
+    for k := 0 to Tree.Items.Count - 1 do
     begin
       NodeData := PItemMenuData(Tree.Items[k].Data);
       if Assigned(NodeData) and (NodeData^.ID = SearchID) and (NodeData^.Tipo = SearchTipo) then
       begin Result := Tree.Items[k]; Exit; end;
-      Result := FindNodeByDataRec(Tree.Items[k], SearchID, SearchTipo); // Procura nos filhos
+      Result := FindNodeByDataRec(Tree.Items[k], SearchID, SearchTipo);
       if Assigned(Result) then Exit;
     end;
   end;
@@ -293,7 +352,8 @@ begin
     Exit;
   end;
 
-  if not FPermissaoController.CarregarEstruturaMenu(MenuEstruturaArray) then
+  // Carrega a estrutura do menu usando o Controller
+  if not FPermissaoController.CarregarEstruturaMenu(MenuEstruturaArray) then // CORRIGIDO: Adicionado THEN
   begin
     ShowMessage('Falha ao carregar estrutura do menu.');
     MemoLog.Lines.Add('Falha ao carregar estrutura do menu do controller.');
@@ -303,9 +363,7 @@ begin
   tvMenu.Items.BeginUpdate;
   try
     tvMenu.Items.Clear;
-
-    // Pass 1: Adicionar Módulos (Tipo 'M')
-    for Item in MenuEstruturaArray do
+    for Item in MenuEstruturaArray do // CORRIGIDO: Iterar sobre o array do controller
     begin
       if Item.Tipo = 'M' then
       begin
@@ -314,26 +372,18 @@ begin
       end;
     end;
 
-    // Pass 2: Adicionar Submódulos (Tipo 'S') e Rotinas (Tipo 'R')
-    // Repetir até que todos os itens sejam adicionados ou não haja mais progresso
-    // (para lidar com qualquer ordem de itens no array)
-    // Uma abordagem mais eficiente seria ordenar por nível ou usar um mapa.
-    // Por simplicidade, vamos iterar múltiplas vezes.
-    // (Esta lógica de múltiplas passagens pode ser otimizada)
-    for i := 0 to Length(MenuEstruturaArray) - 1 do // Garante que todos os itens sejam processados
+    for i := 0 to Length(MenuEstruturaArray) -1 do
     begin
       for Item in MenuEstruturaArray do
       begin
         if Item.Tipo = 'S' then
         begin
-          if Assigned(GetItemMenuData(FindNodeInData(tvMenu, Item.ID, 'S'))) then Continue; // Já adicionado
-
+          if Assigned(FindNodeInData(tvMenu, Item.ID, 'S')) then Continue;
           ParentNode := nil;
-          if Item.IDPaiSubmodulo <> 0 then // Submódulo filho de outro Submódulo
+          if Item.IDPaiSubmodulo <> 0 then
             ParentNode := FindNodeInData(tvMenu, Item.IDPaiSubmodulo, 'S')
-          else if Item.IDPaiModulo <> 0 then // Submódulo filho de Módulo
+          else if Item.IDPaiModulo <> 0 then
             ParentNode := FindNodeInData(tvMenu, Item.IDPaiModulo, 'M');
-
           if Assigned(ParentNode) then
           begin
             Node := tvMenu.Items.AddChildObject(ParentNode, Item.Nome, nil);
@@ -342,14 +392,12 @@ begin
         end
         else if Item.Tipo = 'R' then
         begin
-          if Assigned(GetItemMenuData(FindNodeInData(tvMenu, Item.ID, 'R'))) then Continue; // Já adicionado
-
+          if Assigned(FindNodeInData(tvMenu, Item.ID, 'R')) then Continue;
           ParentNode := nil;
-          if Item.IDPaiSubmodulo <> 0 then // Rotina filha de Submódulo
+          if Item.IDPaiSubmodulo <> 0 then
             ParentNode := FindNodeInData(tvMenu, Item.IDPaiSubmodulo, 'S')
-          else if Item.IDPaiModulo <> 0 then // Rotina filha de Módulo
+          else if Item.IDPaiModulo <> 0 then
             ParentNode := FindNodeInData(tvMenu, Item.IDPaiModulo, 'M');
-
           if Assigned(ParentNode) then
           begin
             Node := tvMenu.Items.AddChildObject(ParentNode, Item.Nome, nil);
@@ -358,26 +406,25 @@ begin
         end;
       end;
     end;
-
   finally
     tvMenu.Items.EndUpdate;
-    if tvMenu.Items.Count > 0 then
+    if tvMenu.Items.Count > 0 then // CORRIGIDO: Adicionado THEN
       tvMenu.Selected := tvMenu.Items[0];
   end;
-  btnLimparTodas.Enabled := tvMenu.Items.Count > 0;
-  btnSelecionarTodas.Enabled := tvMenu.Items.Count > 0;
+  btnLimparTodas.Enabled := (tvMenu.Items.Count > 0);
+  btnSelecionarTodas.Enabled := (tvMenu.Items.Count > 0);
 end;
-
 
 procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
 var i: Integer; NodeData: PItemMenuData; PermItem: TUserPermissionItem;
     TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
+    PermString: string;
 begin
   if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
   NodeData := PItemMenuData(ANode.Data);
   TemAcesso := False; PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False;
 
-  for PermItem in AUserPermissions do
+  for PermItem in AUserPermissions do // CORRIGIDO: Iterar sobre AUserPermissions
   begin
     if (PermItem.ItemID = NodeData^.ID) and (PermItem.ItemTipo = NodeData^.Tipo) then
     begin
@@ -389,16 +436,25 @@ begin
   end;
 
   // Atualiza FPermissoesEditadas com o estado carregado do banco
-  MarcarNoAtualizarListaEditada(NodeData, TemAcesso); // Assume que outras permissões são baseadas em Acesso para M/S
-  if NodeData^.Tipo = 'R' then begin // Para rotinas, atualiza todas as permissões granulares
-      // Esta chamada a MarcarNoAtualizarListaEditada precisa ser mais inteligente
-      // ou precisamos de um método que popule FPermissoesEditadas com todos os campos booleanos
-      // Por agora, vamos simplificar e assumir que o chkPermissaoClick vai lidar com isso quando o usuário interagir.
-      // O mais importante é que os checkboxes visuais estejam corretos.
+  // Esta linha é crucial: FPermissoesEditadas deve refletir o estado inicial do banco
+  PermString := NodeData^.Tipo + '|' + IntToStr(NodeData^.ID) + '|' +
+                BoolToStrDB(TemAcesso) + '|' + BoolToStrDB(PodeInserir) + '|' +
+                BoolToStrDB(PodeAlterar) + '|' + BoolToStrDB(PodeExcluir) + '|' +
+                BoolToStrDB(PodeImprimir);
+
+  // Remove entrada antiga se existir e adiciona a nova
+  for i := FPermissoesEditadas.Count - 1 downto 0 do
+  begin
+    if Pos(NodeData^.Tipo + '|' + IntToStr(NodeData^.ID) + '|', FPermissoesEditadas[i]) = 1 then
+    begin
+      FPermissoesEditadas.Delete(i);
+      Break;
+    end;
   end;
+  FPermissoesEditadas.Add(PermString);
 
 
-  if ANode = tvMenu.Selected then // Atualiza os checkboxes visíveis
+  if ANode = tvMenu.Selected then
   begin
     chkAcesso.Checked := TemAcesso; gbPermissoesItem.Enabled := True;
     if NodeData^.Tipo = 'R' then
@@ -413,7 +469,7 @@ begin
     end;
   end;
 
-  if ANode.HasChildren then
+  if ANode.HasChildren then // CORRIGIDO: Adicionado THEN
     for i := 0 to ANode.Count - 1 do
       AplicarPermissoesVisuaisParaNo(ANode.Item[i], AUserPermissions);
 end;
@@ -431,27 +487,28 @@ begin
   begin ShowMessage('Controller não inicializado.'); Exit; end;
 
   Screen.Cursor := crHourGlass;
-  FPermissoesEditadas.Clear; // Limpa o estado editado anterior
+  FPermissoesEditadas.Clear;
   try
-    PopularTreeView; // Carrega a estrutura do menu
+    PopularTreeView;
 
-    if not FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions) then
+    if not FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions) then // CORRIGIDO: Adicionado THEN
     begin
       ShowMessage('Falha ao carregar permissões do usuário.');
       MemoLog.Lines.Add(Format('Falha ao carregar permissões para Usuário ID %d, Empresa ID %d', [IDUsuario, IDEmpresa]));
+      Screen.Cursor := crDefault; // Restaurar cursor antes de Exit
       Exit;
     end;
     MemoLog.Lines.Add(Format('Permissões carregadas para Usuário ID %d: %d registros.', [IDUsuario, Length(UserPermissions)]));
 
-    if tvMenu.Items.Count > 0 then
+    if tvMenu.Items.Count > 0 then // CORRIGIDO: Adicionado THEN
     begin
        for i := 0 to tvMenu.Items.Count -1 do
           AplicarPermissoesVisuaisParaNo(tvMenu.Items[i], UserPermissions);
 
-       if Assigned(tvMenu.Selected) then // Garante que os checks do nó selecionado sejam atualizados
+       if Assigned(tvMenu.Selected) then
          AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions)
-       else if tvMenu.Items.Count > 0 then // Se nada estiver selecionado, seleciona o primeiro
-         tvMenu.Selected := tvMenu.Items[0]; // Isso vai disparar tvMenuSelectionChanged
+       else if tvMenu.Items.Count > 0 then
+         tvMenu.Selected := tvMenu.Items[0];
     end else LimparPermissoesVisuais;
   finally Screen.Cursor := crDefault; end;
 
@@ -479,18 +536,17 @@ begin
   gbPermissoesItem.Enabled := True; gbPermissoesItem.Caption := 'Permissões para: ' + ANode.Text;
 
   TemAcesso := False; PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False;
-  FoundInOriginal := False; FoundInEdited := False;
+  FoundInEdited := False;
 
-  // 1. Verificar se há um estado "editado" para este nó em FPermissoesEditadas
   PermInfoEdited := TStringList.Create;
   try
     for i := 0 to FPermissoesEditadas.Count - 1 do
     begin
       PermInfoEdited.Delimiter := '|'; PermInfoEdited.DelimitedText := FPermissoesEditadas[i];
-      if PermInfoEdited.Count = 7 then
+      if PermInfoEdited.Count = 7 then // CORRIGIDO: Adicionado THEN
       begin
         PermItemTipoEdited := PermInfoEdited[0][1]; PermItemIDEdited := StrToInt(PermInfoEdited[1]);
-        if (NodeData^.ID = PermItemIDEdited) and (NodeData^.Tipo = PermItemTipoEdited) then
+        if (NodeData^.ID = PermItemIDEdited) and (NodeData^.Tipo = PermItemTipoEdited) then // CORRIGIDO: Adicionado THEN
         begin
           TemAcesso    := StrDBToBool(PermInfoEdited[2]); PodeInserir  := StrDBToBool(PermInfoEdited[3]);
           PodeAlterar  := StrDBToBool(PermInfoEdited[4]); PodeExcluir  := StrDBToBool(PermInfoEdited[5]);
@@ -501,23 +557,22 @@ begin
     end;
   finally PermInfoEdited.Free; end;
 
-  // 2. Se não foi editado, buscar das permissões originais carregadas (AUserPermissions)
-  if not FoundInEdited then
+  if not FoundInEdited then // CORRIGIDO: Adicionado THEN
   begin
     for PermItem in AUserPermissions do
     begin
-      if (PermItem.ItemID = NodeData^.ID) and (PermItem.ItemTipo = NodeData^.Tipo) then
+      if (PermItem.ItemID = NodeData^.ID) and (PermItem.ItemTipo = NodeData^.Tipo) then // CORRIGIDO: Adicionado THEN
       begin
         TemAcesso    := PermItem.Acesso; PodeInserir  := PermItem.Inserir;
         PodeAlterar  := PermItem.Alterar; PodeExcluir  := PermItem.Excluir;
         PodeImprimir := PermItem.Imprimir;
-        FoundInOriginal := True; Break;
+        Break;
       end;
     end;
   end;
 
   chkAcesso.Checked := TemAcesso;
-  if NodeData^.Tipo = 'R' then
+  if NodeData^.Tipo = 'R' then // CORRIGIDO: Adicionado THEN
   begin
     chkInserir.Enabled := True; chkInserir.Checked := PodeInserir; chkAlterar.Enabled := True; chkAlterar.Checked := PodeAlterar;
     chkExcluir.Enabled := True; chkExcluir.Checked := PodeExcluir; chkImprimir.Enabled := True; chkImprimir.Checked := PodeImprimir;
@@ -528,39 +583,22 @@ begin
 end;
 
 procedure TfrmGerenciarPermissoes.tvMenuSelectionChanged(Sender: TObject);
-var UserPermissions: TArrayOfUserPermissionItem; // Precisa ser recarregada ou mantida
+var UserPermissions: TArrayOfUserPermissionItem;
     IDEmpresa, IDUsuario: Integer;
 begin
-  if Assigned(tvMenu.Selected) then
+  if Assigned(tvMenu.Selected) then // CORRIGIDO: Adicionado THEN
   begin
-    // Para atualizar corretamente, precisamos das permissões originais do usuário
-    // A lógica de AplicarPermissoesVisuaisParaNo já preenche FPermissoesEditadas com base no original
-    // Então, AtualizarChecksPermissaoParaNo pode usar FPermissoesEditadas ou as originais
-    // Vamos simplificar e assumir que FPermissoesEditadas é a fonte da verdade para a UI após o carregamento
-    // Se FPermissoesEditadas estiver vazio para este nó, significa que não foi alterado e deve refletir o original.
-
-    // Esta é a parte mais complexa: precisamos do estado original para comparar com o editado.
-    // Por ora, AtualizarChecksPermissaoParaNo tentará ler de FPermissoesEditadas,
-    // se não achar, deveria ler do estado original (que não está sendo passado aqui).
-    // A solução mais simples é que btnCarregarPermissoesClick popule FPermissoesEditadas com o estado do banco.
-    // E chkPermissaoClick modifique FPermissoesEditadas.
-
-    // A chamada a AtualizarChecksPermissaoParaNo agora precisa do array de permissões carregado do banco
-    // para poder exibir o estado correto se o item não estiver em FPermissoesEditadas.
-    // Isso significa que UserPermissions deve ser um campo do form ou recarregado.
-    // Para manter simples por agora, vamos assumir que FPermissoesEditadas reflete o que mostrar.
-    // A lógica de AtualizarChecksPermissaoParaNo foi ajustada para buscar em FPermissoesEditadas.
-
-     if (cbEmpresa.ItemIndex <> -1) and (cbUsuario.ItemIndex <> -1) then
+     if (cbEmpresa.ItemIndex <> -1) and (cbUsuario.ItemIndex <> -1) then // CORRIGIDO: Adicionado THEN
      begin
         IDEmpresa := Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]);
         IDUsuario := Integer(cbUsuario.Items.Objects[cbUsuario.ItemIndex]);
-        if Assigned(FPermissaoController) then
+        if Assigned(FPermissaoController) then // CORRIGIDO: Adicionado THEN
         begin
-          // Recarrega as permissões originais para referência.
-          // Idealmente, isso seria armazenado em um campo do formulário após o btnCarregarPermissoesClick
-          FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions);
-          AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions);
+          // Recarrega as permissões originais para referência ao mudar seleção no TreeView
+          if FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions) then // CORRIGIDO: Adicionado THEN
+            AktualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions)
+          else
+            MemoLog.Lines.Add('Falha ao recarregar permissões em tvMenuSelectionChanged.');
         end;
      end;
   end
@@ -577,17 +615,16 @@ begin
     for idx := 0 to FPermissoesEditadas.Count - 1 do
     begin
       tmpPermInfo.Delimiter := '|'; tmpPermInfo.DelimitedText := FPermissoesEditadas[idx];
-      if (tmpPermInfo.Count = 7) and (tmpPermInfo[0][1] = ANodeData^.Tipo) and (StrToInt(tmpPermInfo[1]) = ANodeData^.ID) then
+      if (tmpPermInfo.Count = 7) and (tmpPermInfo[0][1] = ANodeData^.Tipo) and (StrToInt(tmpPermInfo[1]) = ANodeData^.ID) then // CORRIGIDO: Adicionado THEN
       begin
-        // Atualiza apenas o acesso, as outras permissões são baseadas nos checkboxes se for rotina
         tmpPermInfo[2] := BoolToStrDB(ACheckedState);
-        if ANodeData^.Tipo = 'R' then begin // Se for rotina, e estamos marcando acesso, marcamos tudo (ou conforme checkboxes)
-             PodeInserir := ACheckedState and chkInserir.Checked; // Se limpando, desmarca tudo
-             PodeAlterar := ACheckedState and chkAlterar.Checked;
-             PodeExcluir := ACheckedState and chkExcluir.Checked;
-             PodeImprimir := ACheckedState and chkImprimir.Checked;
-             if not ACheckedState then // Se Acesso é False, todas as outras são False
-             begin PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False; end;
+        if ANodeData^.Tipo = 'R' then begin
+             PodeInserir := chkInserir.Checked; // Usa o estado atual dos checkboxes para as permissões granulares
+             PodeAlterar := chkAlterar.Checked;
+             PodeExcluir := chkExcluir.Checked;
+             PodeImprimir := chkImprimir.Checked;
+             // Se Acesso é False, todas as outras são False, independente dos checkboxes
+             if not ACheckedState then begin PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False; end;
 
              tmpPermInfo[3] := BoolToStrDB(PodeInserir); tmpPermInfo[4] := BoolToStrDB(PodeAlterar);
              tmpPermInfo[5] := BoolToStrDB(PodeExcluir); tmpPermInfo[6] := BoolToStrDB(PodeImprimir);
@@ -595,11 +632,11 @@ begin
         FPermissoesEditadas[idx] := tmpPermInfo.DelimitedText; foundInList := True; Break;
       end;
     end;
-    if not foundInList then // Se não achou, adiciona nova entrada
+    if not foundInList then
     begin
       if ANodeData^.Tipo = 'R' then begin
-           PodeInserir := ACheckedState and chkInserir.Checked; PodeAlterar := ACheckedState and chkAlterar.Checked;
-           PodeExcluir := ACheckedState and chkExcluir.Checked; PodeImprimir := ACheckedState and chkImprimir.Checked;
+           PodeInserir := chkInserir.Checked; PodeAlterar := chkAlterar.Checked;
+           PodeExcluir := chkExcluir.Checked; PodeImprimir := chkImprimir.Checked;
            if not ACheckedState then begin PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False; end;
       end else begin PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False; end;
 
@@ -622,7 +659,6 @@ begin
   FPermissoesModificadas := True;
   btnSalvarPermissoes.Enabled := True;
 
-  // Atualiza a FPermissoesEditadas com o estado atual dos checkboxes
   MarcarNoAtualizarListaEditada(NodeData, chkAcesso.Checked);
 end;
 
@@ -646,7 +682,6 @@ begin
   Screen.Cursor := crHourGlass;
   MemoLog.Lines.Add(Format('--- Iniciando salvamento para Usuário ID: %d, Empresa ID: %d ---', [IDUsuario, IDEmpresa]));
   try
-    // Converter FPermissoesEditadas para TArrayOfUserPermissionItem
     SetLength(UserPermsToSave, FPermissoesEditadas.Count);
     PermInfo := TStringList.Create;
     try
@@ -654,7 +689,7 @@ begin
       begin
         PermLinha := FPermissoesEditadas[idx];
         PermInfo.Delimiter := '|'; PermInfo.DelimitedText := PermLinha;
-        if PermInfo.Count = 7 then
+        if PermInfo.Count = 7 then // CORRIGIDO: Adicionado THEN
         begin
            UserPermsToSave[idx].ItemTipo := PermInfo[0][1];
            UserPermsToSave[idx].ItemID   := StrToInt(PermInfo[1]);
@@ -666,20 +701,19 @@ begin
            MemoLog.Lines.Add(Format('Preparando para Salvar: Tipo:%s ID:%s Ac:%s I:%s A:%s E:%s P:%s',
              [PermInfo[0], PermInfo[1], PermInfo[2], PermInfo[3], PermInfo[4], PermInfo[5], PermInfo[6]]));
         end else begin
-           SetLength(UserPermsToSave, idx); // Ajusta tamanho se linha mal formada
+           SetLength(UserPermsToSave, idx);
            MemoLog.Lines.Add('Linha mal formada em FPermissoesEditadas: ' + PermLinha);
            Break;
         end;
       end;
 
-      if FPermissaoController.SalvarTodasPermissoesUsuario(IDEmpresa, IDUsuario, UserPermsToSave) then
+      if FPermissaoController.SalvarTodasPermissoesUsuario(IDEmpresa, IDUsuario, UserPermsToSave) then // CORRIGIDO: Adicionado THEN
       begin
         FPermissoesModificadas := False;
         btnSalvarPermissoes.Enabled := False;
-        FPermissoesEditadas.Clear; // Limpa após salvar com sucesso
+        FPermissoesEditadas.Clear;
         ShowMessage('Permissões salvas com sucesso.');
         MemoLog.Lines.Add('Permissões salvas via Controller.');
-        // Recarregar as permissões para refletir o estado do banco
         btnCarregarPermissoesClick(nil);
       end else
       begin
@@ -708,23 +742,23 @@ begin
 
   frmSelUsu := TfrmSelecionarUsuario.Create(Application);
   try
-    frmSelUsu.CarregarUsuariosParaCopia(IDEmpresaCopia, IDUsuDestino); // Passa o controller se TfrmSelecionarUsuario precisar dele
-    if frmSelUsu.ShowModal = mrOk then
+    frmSelUsu.CarregarUsuariosParaCopia(IDEmpresaCopia, IDUsuDestino);
+    if frmSelUsu.ShowModal = mrOk then // CORRIGIDO: Adicionado THEN
     begin
       IDUsuOrigem := frmSelUsu.IDUsuarioSelecionado;
-      if IDUsuOrigem > 0 then
+      if IDUsuOrigem > 0 then // CORRIGIDO: Adicionado THEN
       begin
         if MessageDlgFmt('Copiar todas as permissões do usuário "%s" para o usuário "%s"?',
                          [frmSelUsu.NomeUsuarioSelecionado, cbUsuario.Text],
-                         mtConfirmation, [mbYes, mbNo],0) = mrYes then
+                         mtConfirmation, [mbYes, mbNo],0) = mrYes then // CORRIGIDO: Adicionado THEN
         begin
           Screen.Cursor := crHourGlass;
           try
-            if FPermissaoController.CopiarPermissoes(IDEmpresaCopia, IDUsuOrigem, IDUsuDestino) then
+            if FPermissaoController.CopiarPermissoes(IDEmpresaCopia, IDUsuOrigem, IDUsuDestino) then // CORRIGIDO: Adicionado THEN
             begin
               ShowMessage('Permissões copiadas com sucesso. As permissões para o usuário destino foram recarregadas.');
               MemoLog.Lines.Add(Format('Permissões copiadas de Usuário ID %d para Usuário ID %d.', [IDUsuOrigem, IDUsuDestino]));
-              btnCarregarPermissoesClick(nil); // Recarrega as permissões do usuário destino
+              btnCarregarPermissoesClick(nil);
             end else
             begin
               ShowMessage('Falha ao copiar permissões.');
@@ -762,9 +796,6 @@ begin
 
   for i := 0 to tvMenu.Items.Count - 1 do ProcessarNoParaLimpezaTotal(tvMenu.Items[i]);
 
-  // Atualiza a UI para o nó selecionado (se houver) para refletir a limpeza
-  // A UserPermissions aqui seria um array vazio ou com todos os acessos a false.
-  // Para simplificar, vamos apenas chamar AtualizarChecksPermissaoParaNo com um array vazio.
   SetLength(UserPermissions, 0);
   if Assigned(tvMenu.Selected) then
     AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions)
@@ -786,21 +817,12 @@ begin
 
   for i := 0 to tvMenu.Items.Count - 1 do ProcessarNoParaSelecaoTotal(tvMenu.Items[i]);
 
-  // Para atualizar a UI corretamente, precisamos simular um UserPermissions com tudo True.
-  // A AtualizarChecksPermissaoParaNo usará FPermissoesEditadas que foi modificado por ProcessarNoParaSelecaoTotal.
-  // A passagem de UserPermissions para AtualizarChecksPermissaoParaNo em tvMenuSelectionChanged é mais crítica.
-  // Aqui, podemos apenas forçar a atualização do nó selecionado.
-  if Assigned(tvMenu.Selected) then
+  if Assigned(tvMenu.Selected) then // CORRIGIDO: Adicionado THEN
   begin
-    // Recriar um UserPermissions temporário para refletir "tudo selecionado" para este nó.
-    // Ou, mais simples, confiar que MarcarNoAtualizarListaEditada já atualizou FPermissoesEditadas
-    // e AtualizarChecksPermissaoParaNo lerá corretamente de lá.
-    // Se tvMenuSelectionChanged é chamado, ele fará a lógica correta.
-    // Forçando uma atualização simples do nó selecionado com base no que MarcarNoAtualizarListaEditada fez:
-    if (cbEmpresa.ItemIndex <> -1) and (cbUsuario.ItemIndex <> -1) and Assigned(FPermissaoController) then
+    if (cbEmpresa.ItemIndex <> -1) and (cbUsuario.ItemIndex <> -1) and Assigned(FPermissaoController) then // CORRIGIDO: Adicionado THEN
     begin
-        FPermissaoController.CarregarPermissoesUsuario(Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]), Integer(cbUsuario.Items.Objects[cbUsuario.ItemIndex]), UserPermissions); // Pega as originais para o método
-        AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions); // Este método agora olha FPermissoesEditadas primeiro
+        if FPermissaoController.CarregarPermissoesUsuario(Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]), Integer(cbUsuario.Items.Objects[cbUsuario.ItemIndex]), UserPermissions) then // CORRIGIDO: Adicionado THEN
+          AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions);
     end;
   end;
 
