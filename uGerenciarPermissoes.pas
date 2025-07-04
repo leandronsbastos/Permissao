@@ -14,6 +14,23 @@ type
   end;
   PItemMenuData = ^TItemMenuData;
 
+  // Declaração de TArrayOfUserPermissionItem movida para cá ou para uma unit comum
+  // Se uPermissaoController já a define e está na uses clause, não precisa redefinir.
+  // Para este exemplo, vamos assumir que ela é necessária aqui se uPermissaoController não for usado diretamente ainda.
+  // No entanto, a boa prática seria ter essa definição em um local comum ou em uPermissaoController.
+  // Se uPermissaoController for usado, esta declaração pode ser removida daqui.
+  _TUserPermissionItem = record // Renomeado temporariamente para evitar conflito se uPermissaoController for usado
+    ItemID: Integer;
+    ItemTipo: Char;
+    Acesso: Boolean;
+    Inserir: Boolean;
+    Alterar: Boolean;
+    Excluir: Boolean;
+    Imprimir: Boolean;
+  end;
+  _TArrayOfUserPermissionItem = array of _TUserPermissionItem;
+
+
   TfrmGerenciarPermissoes = class(TForm)
     pnlFiltros: TPanel;
     lblEmpresa: TLabel;
@@ -77,9 +94,8 @@ type
     procedure SimularCargaUsuarios(AIDEmpresa: Integer);
     procedure SimularCargaEstruturaMenu;
     procedure SimularCargaPermissoesUsuario(AIDUsuario, AIDEmpresa: Integer);
-    // procedure SalvarPermissaoParaNo(ANode: TTreeNode; AIDUsuario, AIDEmpresa: Integer); // Não mais usado diretamente assim
-    function BoolToStrDB(Value: Boolean): string; // Auxiliar para simulação
-    function StrDBToBool(Value: string): Boolean; // Auxiliar para simulação
+    function BoolToStrDB(Value: Boolean): string;
+    function StrDBToBool(Value: string): Boolean;
 
   public
     { Public declarations }
@@ -90,7 +106,7 @@ var
 
 implementation
 
-// uses uPermissaoController; // Descomentar para usar o controller real
+ uses uPermissaoController; // Assume que uPermissaoController define TArrayOfUserPermissionItem
 
 {$R *.dfm}
 
@@ -106,13 +122,6 @@ end;
 
 procedure TfrmGerenciarPermissoes.FormCreate(Sender: TObject);
 begin
-  // Para usar o controller real:
-  // FPermissaoController := TPermissaoController.Create('SUA_CONNECTION_STRING_AQUI');
-  // ou FPermissaoController := TPermissaoController.Create('SERVIDOR', 'BANCO', 'USER', 'PASS');
-  // if not FPermissaoController.TestConnection then
-  //   ShowMessage('Falha ao conectar ao banco de dados!');
-  // // Tratar falha de conexão
-
   FPermissoesModificadas := False;
   FEmpresasData := TStringList.Create;
   FUsuariosData := TStringList.Create;
@@ -147,7 +156,6 @@ begin
   FUsuariosData.Free;
   FMenuEstrutura.Free;
   FPermissoesUsuarioAtual.Free;
-  // FreeAndNil(FPermissaoController); // Para controller real
 end;
 
 procedure TfrmGerenciarPermissoes.FormShow(Sender: TObject);
@@ -165,8 +173,6 @@ begin
   FEmpresasData.Clear;
   FEmpresasData.Add('1|Empresa A');
   FEmpresasData.Add('2|Empresa B');
-  // Em uma implementação real, usaria FPermissaoController.CarregarEmpresas(cbEmpresa.Items)
-  // e ajustaria para popular o ComboBox com Objects.
 end;
 
 procedure TfrmGerenciarPermissoes.CarregarEmpresas;
@@ -174,13 +180,12 @@ var
   i: Integer;
   EmpresaInfo: TStringList;
 begin
-  SimularCargaEmpresas; // Substituir pela chamada ao Controller real
+  SimularCargaEmpresas;
   cbEmpresa.Items.Clear;
   EmpresaInfo := TStringList.Create;
   try
     for i := 0 to FEmpresasData.Count - 1 do
     begin
-      // Usar StrUtils.SplitString se preferir, ou manual como antes
       EmpresaInfo.Delimiter := '|';
       EmpresaInfo.DelimitedText := FEmpresasData[i];
       if EmpresaInfo.Count = 2 then
@@ -208,7 +213,6 @@ begin
     FUsuariosData.Add('201|Usuário Gamma|2');
     FUsuariosData.Add('202|Usuário Delta|2');
   end;
-  // Real: FPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa, cbUsuario.Items);
 end;
 
 procedure TfrmGerenciarPermissoes.CarregarUsuarios(AIDEmpresa: Integer);
@@ -216,7 +220,7 @@ var
   i: Integer;
   UsuarioInfo: TStringList;
 begin
-  SimularCargaUsuarios(AIDEmpresa); // Substituir pelo Controller
+  SimularCargaUsuarios(AIDEmpresa);
   cbUsuario.Items.Clear;
   tvMenu.Items.Clear;
   LimparPermissoesVisuais;
@@ -287,9 +291,6 @@ begin
   FMenuEstrutura.Add('4|R|Clientes|2|0|frmClientes|1');
   FMenuEstrutura.Add('102|S|SPC|2|0||4');
   FMenuEstrutura.Add('5|R|Enviar ou Cancelar|0|102|frmSpcEnviarCancelar|1');
-  // Real: var MenuItems: TArrayOfMenuItemStructure;
-  //       FPermissaoController.CarregarEstruturaMenu(MenuItems);
-  //       Popular FMenuEstrutura a partir de MenuItems ou usar MenuItems diretamente.
 end;
 
 procedure TfrmGerenciarPermissoes.PopularTreeView;
@@ -297,7 +298,7 @@ var
   i: Integer;
   ItemInfo: TStringList;
   Node, ParentNode: TTreeNode;
-  ItemID, ParentModuloID, ParentSubmoduloID: Integer; // Ordem não usada aqui
+  ItemID, ParentModuloID, ParentSubmoduloID: Integer;
   ItemTipo: Char;
   ItemNome, NomeForm: string;
   function FindNodeByData(Tree: TTreeView; SearchID: Integer; SearchTipo: Char): TTreeNode;
@@ -370,16 +371,13 @@ end;
 procedure TfrmGerenciarPermissoes.SimularCargaPermissoesUsuario(AIDUsuario, AIDEmpresa: Integer);
 begin
   FPermissoesUsuarioAtual.Clear;
-  if (AIDUsuario = 101) and (AIDEmpresa = 1) then // Formato: "TIPO|ID|ACESSO|INS|ALT|EXC|IMP" (0/1)
+  if (AIDUsuario = 101) and (AIDEmpresa = 1) then
   begin
     FPermissoesUsuarioAtual.Add('M|1|1|0|0|0|0');
     FPermissoesUsuarioAtual.Add('R|1|1|1|1|0|0');
     FPermissoesUsuarioAtual.Add('S|101|1|0|0|0|0');
     FPermissoesUsuarioAtual.Add('R|3|1|1|1|1|1');
   end;
-  // Real: var UserPerms: TArrayOfUserPermissionItem;
-  //       FPermissaoController.CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario, UserPerms);
-  //       Popular FPermissoesUsuarioAtual a partir de UserPerms, convertendo Boolean para '0'/'1'.
 end;
 
 procedure TfrmGerenciarPermissoes.AplicarPermissoesAoNo(ANode: TTreeNode; AIDUsuario, AIDEmpresa: Integer);
@@ -525,9 +523,12 @@ begin
 end;
 
 procedure TfrmGerenciarPermissoes.btnSalvarPermissoesClick(Sender: TObject);
-var IDEmpresa, IDUsuario: Integer; PermInfo: TStringList; PermLinha: string;
-    UserPerms: TArrayOfUserPermissionItem; // Para controller real
-    idx: Integer;
+var
+  IDEmpresa, IDUsuario: Integer;
+  PermInfo: TStringList;
+  PermLinha: string; // Declarada
+  UserPerms: TArrayOfUserPermissionItem; // Declarada, usa a definição de uPermissaoController
+  idx: Integer; // Declarada
 begin
   if not FPermissoesModificadas then begin ShowMessage('Nenhuma permissão foi alterada.'); Exit; end;
   if (cbEmpresa.ItemIndex = -1) or (cbUsuario.ItemIndex = -1) then begin ShowMessage('Selecione uma empresa e um usuário.'); Exit; end;
@@ -536,7 +537,6 @@ begin
   Screen.Cursor := crHourGlass;
   MemoLog.Lines.Add(Format('--- Iniciando salvamento para Usuário ID: %d, Empresa ID: %d ---', [IDUsuario, IDEmpresa]));
   try
-    // Para Controller Real: Converter FPermissoesUsuarioAtual para TArrayOfUserPermissionItem
     SetLength(UserPerms, FPermissoesUsuarioAtual.Count);
     PermInfo := TStringList.Create;
     try
@@ -553,22 +553,10 @@ begin
            UserPerms[idx].Alterar  := StrDBToBool(PermInfo[4]);
            UserPerms[idx].Excluir  := StrDBToBool(PermInfo[5]);
            UserPerms[idx].Imprimir := StrDBToBool(PermInfo[6]);
-
            MemoLog.Lines.Add(Format('Para Salvar: Tipo:%s ID:%s Ac:%s I:%s A:%s E:%s P:%s',
              [PermInfo[0], PermInfo[1], PermInfo[2], PermInfo[3], PermInfo[4], PermInfo[5], PermInfo[6]]));
-        end else begin SetLength(UserPerms, idx); Break; end; // Linha mal formada
+        end else begin SetLength(UserPerms, idx); Break; end;
       end;
-      // if Assigned(FPermissaoController) and (Length(UserPerms) > 0 Or FPermissoesUsuarioAtual.Count = 0) then
-      // begin
-      //   if FPermissaoController.SalvarTodasPermissoesUsuario(IDEmpresa, IDUsuario, UserPerms) then
-      //   begin
-      //     FPermissoesModificadas := False; btnSalvarPermissoes.Enabled := False;
-      //     ShowMessage('Permissões salvas com sucesso.');
-      //     MemoLog.Lines.Add('Permissões salvas via Controller.');
-      //   end else ShowMessage('Falha ao salvar permissões via Controller.');
-      // end else if not Assigned(FPermissaoController) then ... (simulação abaixo)
-
-      // Simulação (se FPermissaoController não estiver ativo)
       ShowMessage('Simulação: Permissões seriam salvas aqui. Veja o MemoLog.');
       FPermissoesModificadas := False; btnSalvarPermissoes.Enabled := False;
       MemoLog.Lines.Add('--- Fim do salvamento (simulação) ---');
@@ -579,36 +567,11 @@ begin
 end;
 
 procedure TfrmGerenciarPermissoes.btnCopiarPermissoesClick(Sender: TObject);
-// var frmSelUsu: TfrmSelecionarUsuario; IDUsuOrigem: Integer;
 begin
   if (cbEmpresa.ItemIndex = -1) or (cbUsuario.ItemIndex = -1) then
   begin ShowMessage('Selecione uma empresa e o usuário de DESTINO primeiro.'); Exit; end;
   ShowMessage('Funcionalidade "Copiar Permissões" a ser implementada.');
   MemoLog.Lines.Add('Botão Copiar Permissões clicado.');
-  (* // Lógica com controller real:
-  frmSelUsu := TfrmSelecionarUsuario.Create(Application);
-  try
-    frmSelUsu.CarregarUsuariosParaCopia(Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]), Integer(cbUsuario.Items.Objects[cbUsuario.ItemIndex]));
-    if frmSelUsu.ShowModal = mrOk then
-    begin
-      IDUsuOrigem := frmSelUsu.IDUsuarioSelecionado;
-      if IDUsuOrigem > 0 then
-      begin
-        if MessageDlgFmt('Copiar permissões de %s para %s?', [frmSelUsu.NomeUsuarioSelecionado, cbUsuario.Text], mtConfirmation, [mbYes, mbNo],0) = mrYes then
-        begin
-          Screen.Cursor := crHourGlass;
-          try
-            // if FPermissaoController.CopiarPermissoes(Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]), IDUsuOrigem, Integer(cbUsuario.Items.Objects[cbUsuario.ItemIndex])) then
-            // begin
-            //   ShowMessage('Permissões copiadas. Recarregue as permissões do usuário destino.');
-            //   btnCarregarPermissoesClick(nil); // Recarrega
-            // end else ShowMessage('Falha ao copiar permissões.');
-          finally Screen.Cursor := crDefault; end;
-        end;
-      end;
-    end;
-  finally FreeAndNil(frmSelUsu); end;
-  *)
 end;
 
 procedure TfrmGerenciarPermissoes.MarcarNoAtualizarLista(ANodeData: PItemMenuData; ACheckedState: Boolean);
