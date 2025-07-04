@@ -56,8 +56,9 @@ type
     function ValidarPermissao(AIDEmpresa, AIDUsuario: Integer; ANomeForm: string; out PInserir, PAlterar, PExcluir, PImprimir: Boolean): Boolean; overload;
     function ValidarPermissao(AIDEmpresa, AIDUsuario: Integer; AItemID: Integer; AItemTipo: Char; out PInserir, PAlterar, PExcluir, PImprimir: Boolean): Boolean; overload;
 
-    function CarregarEmpresas(var EmpresasList: TStrings): Boolean;
-    function CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStrings): Boolean;
+    // Alterado para TStringList para resolver E2033
+    function CarregarEmpresas(var EmpresasList: TStringList): Boolean;
+    function CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStringList): Boolean;
   end;
 
 implementation
@@ -110,7 +111,7 @@ begin
     if Assigned(FADOConnection) and FADOConnection.Connected then
       FADOConnection.Connected := False;
 
-    if FConnectionString = '' then Exit; // Não tenta conectar se a string estiver vazia
+    if FConnectionString = '' then Exit;
 
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
@@ -528,7 +529,7 @@ begin
   end;
 end;
 
-function TPermissaoController.CarregarEmpresas(var EmpresasList: TStrings): Boolean;
+function TPermissaoController.CarregarEmpresas(var EmpresasList: TStringList): Boolean; // Alterado para TStringList
 var
   SQL: string;
   ADODataSet: TADODataSet;
@@ -565,7 +566,7 @@ begin
   FreeAndNil(ADODataSet);
 end;
 
-function TPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStrings): Boolean;
+function TPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStringList): Boolean; // Alterado para TStringList
 var
   SQL: string;
   ADODataSet: TADODataSet;
