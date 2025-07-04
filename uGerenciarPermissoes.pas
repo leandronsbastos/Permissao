@@ -4,17 +4,17 @@ interface
 
 uses
   Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
-  Dialogs, StdCtrls, ComCtrls, ExtCtrls, DBCtrls, DB, ActnList, ImgList, StrUtils; // StrUtils adicionado
+  Dialogs, StdCtrls, ComCtrls, ExtCtrls, DBCtrls, DB, ActnList, ImgList, StrUtils;
 
 type
   TItemMenuData = record
     ID: Integer;
-    Tipo: Char; // 'M' = Modulo, 'S' = Submodulo, 'R' = Rotina
+    Tipo: Char;
     NomeForm: string;
   end;
   PItemMenuData = ^TItemMenuData;
 
-  _TUserPermissionItem = record // Renomeado temporariamente para evitar conflito se uPermissaoController for usado
+  _TUserPermissionItem = record
     ItemID: Integer;
     ItemTipo: Char;
     Acesso: Boolean;
@@ -64,9 +64,15 @@ type
     procedure FormDestroy(Sender: TObject);
   private
     { Private declarations }
+    // Campos primeiro
+    FEmpresasData: TStringList;
+    FUsuariosData: TStringList;
+    FMenuEstrutura: TStringList;
+    FPermissoesUsuarioAtual: TStringList;
     FPermissaoControllerSimulado: TObject;
     FPermissoesModificadas: Boolean;
 
+    // Depois os métodos
     procedure CarregarEmpresas;
     procedure CarregarUsuarios(AIDEmpresa: Integer);
     procedure LimparPermissoesVisuais;
@@ -78,11 +84,6 @@ type
     procedure MarcarNoAtualizarLista(ANodeData: PItemMenuData; ACheckedState: Boolean);
     procedure ProcessarNoParaSelecaoTotal(ANode: TTreeNode);
     procedure ProcessarNoParaLimpezaTotal(ANode: TTreeNode);
-
-    FEmpresasData: TStringList;
-    FUsuariosData: TStringList;
-    FMenuEstrutura: TStringList;
-    FPermissoesUsuarioAtual: TStringList;
 
     procedure SimularCargaEmpresas;
     procedure SimularCargaUsuarios(AIDEmpresa: Integer);
@@ -483,7 +484,7 @@ end;
 procedure TfrmGerenciarPermissoes.tvMenuSelectionChanged(Sender: TObject);
 begin
   if Assigned(tvMenu.Selected) then
-    AtualizarChecksPermissaoParaNo(tvMenu.Selected) // CORRIGIDO
+    AtualizarChecksPermissaoParaNo(tvMenu.Selected)
   else
     LimparPermissoesVisuais;
 end;
