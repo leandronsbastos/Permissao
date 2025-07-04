@@ -3,12 +3,12 @@ unit uPermissaoController;
 interface
 
 uses
-  SysUtils, Classes, DB, ADODB, Variants; // Variants para IfThen
+  SysUtils, Classes, DB, ADODB, Variants;
 
 type
   TMenuItemStructure = record
     ID: Integer;
-    Tipo: Char; // 'M'odulo, 'S'ubmodulo, 'R'otina
+    Tipo: Char;
     Nome: string;
     IDPaiModulo: Integer;
     IDPaiSubmodulo: Integer;
@@ -19,8 +19,8 @@ type
 
   TUserPermissionItem = record
     ItemID: Integer;
-    ItemTipo: Char; // M, S, R
-    Acesso: Boolean; // Mantém Boolean no Delphi, converte para 0/1 para o DB
+    ItemTipo: Char;
+    Acesso: Boolean;
     Inserir: Boolean;
     Alterar: Boolean;
     Excluir: Boolean;
@@ -31,23 +31,22 @@ type
   TPermissaoController = class
   private
     FADOConnection: TADOConnection;
-    FConnectionString: string; // Armazena a string de conexão
+    FConnectionString: string;
 
     function QueryToRecords(SQL: string; var ARecords: TArrayOfMenuItemStructure): Boolean; overload;
     function QueryToUserPermissions(SQL: string; var APermissions: TArrayOfUserPermissionItem): Boolean; overload;
     function ExecuteSQL(SQL: string): Boolean;
 
     function QuotedStrDB(const S: string): string;
-    procedure SetSQLServerConnectionString(const AServer, ADatabase, AUser, APassword: string; AIntegratedSecurity: Boolean = False);
     function GetFieldAsBoolean(DataSet: TDataSet; const FieldName: string): Boolean;
     function BoolToDBInt(Value: Boolean): Integer;
 
   public
-    // Construtor pode receber a string de conexão diretamente ou parâmetros para montá-la
     constructor Create(const AConnString: string); overload;
     constructor Create(const AServer, ADatabase, AUser, APassword: string; AIntegratedSecurity: Boolean = False); overload;
     destructor Destroy; override;
 
+    procedure SetSQLServerConnectionParameters(const AServer, ADatabase, AUser, APassword: string; AIntegratedSecurity: Boolean = False);
     function TestConnection: Boolean;
 
     function CarregarEstruturaMenu(var AMenuEstrutura: TArrayOfMenuItemStructure): Boolean;
@@ -78,7 +77,7 @@ begin
   inherited Create;
   FADOConnection := TADOConnection.Create(nil);
   FADOConnection.LoginPrompt := False;
-  SetSQLServerConnectionString(AServer, ADatabase, AUser, APassword, AIntegratedSecurity);
+  SetSQLServerConnectionParameters(AServer, ADatabase, AUser, APassword, AIntegratedSecurity);
 end;
 
 destructor TPermissaoController.Destroy;
@@ -92,7 +91,7 @@ begin
   inherited Destroy;
 end;
 
-procedure TPermissaoController.SetSQLServerConnectionString(const AServer, ADatabase, AUser, APassword: string; AIntegratedSecurity: Boolean);
+procedure TPermissaoController.SetSQLServerConnectionParameters(const AServer, ADatabase, AUser, APassword: string; AIntegratedSecurity: Boolean);
 begin
   if AIntegratedSecurity then
     FConnectionString := Format('Provider=SQLOLEDB.1;Integrated Security=SSPI;Persist Security Info=False;Initial Catalog=%s;Data Source=%s',
@@ -100,19 +99,23 @@ begin
   else
     FConnectionString := Format('Provider=SQLOLEDB.1;Password=%s;Persist Security Info=True;User ID=%s;Initial Catalog=%s;Data Source=%s',
                               [APassword, AUser, ADatabase, AServer]);
-  if FADOConnection.Connected then FADOConnection.Connected := False; // Força reconexão com nova string se já estava conectado
+  if Assigned(FADOConnection) and FADOConnection.Connected then
+    FADOConnection.Connected := False;
 end;
 
 function TPermissaoController.TestConnection: Boolean;
 begin
   Result := False;
   try
-    if FADOConnection.Connected then FADOConnection.Connected := False;
+    if Assigned(FADOConnection) and FADOConnection.Connected then
+      FADOConnection.Connected := False;
+
+    if FConnectionString = '' then Exit; // Não tenta conectar se a string estiver vazia
+
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
     Result := FADOConnection.Connected;
   except
-    // Logar ou tratar exceção
     Result := False;
   end;
 end;
@@ -125,7 +128,7 @@ end;
 
 function TPermissaoController.BoolToDBInt(Value: Boolean): Integer;
 begin
-  Result := Ord(Value); // Ord(False)=0, Ord(True)=1
+  Result := Ord(Value);
 end;
 
 function TPermissaoController.GetFieldAsBoolean(DataSet: TDataSet; const FieldName: string): Boolean;
@@ -140,6 +143,7 @@ begin
   Result := False;
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
@@ -155,7 +159,6 @@ begin
     except
       on E: Exception do
       begin
-        // Logar erro E.Message
         Result := False;
       end;
     end;
@@ -173,6 +176,7 @@ begin
 
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
@@ -230,6 +234,7 @@ begin
   SetLength(APermissions, 0);
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
@@ -301,7 +306,6 @@ function TPermissaoController.CarregarEstruturaMenu(var AMenuEstrutura: TArrayOf
 var
   SQL: string;
 begin
-  // SQL Server compatível. NULLs em ID_MODULO_ASSOCIADO/ID_SUBMODULO_PAI/NOME_FORM são ok.
   SQL :=
     'SELECT ID_MODULO AS ITEM_ID, ''M'' AS ITEM_TIPO, NOME_MODULO AS ITEM_NOME, ' +
     '   NULL AS ID_MODULO_ASSOCIADO, NULL AS ID_SUBMODULO_PAI, NULL AS NOME_FORM, ORDEM_EXIBICAO ' +
@@ -339,6 +343,7 @@ begin
   Result := False;
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
@@ -410,6 +415,7 @@ begin
 
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
@@ -417,7 +423,7 @@ begin
 
   ADODataSet := TADODataSet.Create(nil);
   try
-    SQL := Format('SELECT ADMINISTRADOR FROM USUARIO WHERE ID_USUARIO = %d AND ID_EMPRESA = %d AND ATIVO = 1', // ATIVO = 1 para True
+    SQL := Format('SELECT ADMINISTRADOR FROM USUARIO WHERE ID_USUARIO = %d AND ID_EMPRESA = %d AND ATIVO = 1',
                   [AIDUsuario, AIDEmpresa]);
     ADODataSet.Connection := FADOConnection;
     ADODataSet.CommandText := SQL;
@@ -437,7 +443,7 @@ begin
       'SELECT PU.ACESSO, PU.P_INSERIR, PU.P_ALTERAR, PU.P_EXCLUIR, PU.P_IMPRIMIR ' +
       'FROM PERMISSAO_USUARIO PU ' +
       'INNER JOIN ROTINA R ON PU.ID_ROTINA_PERMITIDA = R.ID_ROTINA ' +
-      'WHERE PU.ID_EMPRESA = %d AND PU.ID_USUARIO = %d AND R.NOME_FORM = %s AND PU.ACESSO = 1', // ACESSO = 1 para True
+      'WHERE PU.ID_EMPRESA = %d AND PU.ID_USUARIO = %d AND R.NOME_FORM = %s AND PU.ACESSO = 1',
       [AIDEmpresa, AIDUsuario, QuotedStrDB(ANomeForm)]);
 
     ADODataSet.CommandText := SQL;
@@ -467,6 +473,7 @@ begin
 
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
@@ -474,7 +481,7 @@ begin
 
   ADODataSet := TADODataSet.Create(nil);
   try
-    SQL := Format('SELECT ADMINISTRADOR FROM USUARIO WHERE ID_USUARIO = %d AND ID_EMPRESA = %d AND ATIVO = 1', // ATIVO = 1 para True
+    SQL := Format('SELECT ADMINISTRADOR FROM USUARIO WHERE ID_USUARIO = %d AND ID_EMPRESA = %d AND ATIVO = 1',
                   [AIDUsuario, AIDEmpresa]);
     ADODataSet.Connection := FADOConnection;
     ADODataSet.CommandText := SQL;
@@ -500,7 +507,7 @@ begin
     SQL := Format(
       'SELECT ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR ' +
       'FROM PERMISSAO_USUARIO ' +
-      'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s = %d AND ACESSO = 1', // ACESSO = 1 para True
+      'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s = %d AND ACESSO = 1',
       [AIDEmpresa, AIDUsuario, CampoItemFK, AItemID]);
 
     ADODataSet.CommandText := SQL;
@@ -530,12 +537,13 @@ begin
   EmpresasList.Clear;
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
   if not FADOConnection.Connected then Exit;
 
-  SQL := 'SELECT ID_EMPRESA, NOME_EMPRESA FROM EMPRESA WHERE ATIVO = 1 ORDER BY NOME_EMPRESA'; // ATIVO = 1 para True
+  SQL := 'SELECT ID_EMPRESA, NOME_EMPRESA FROM EMPRESA WHERE ATIVO = 1 ORDER BY NOME_EMPRESA';
   ADODataSet := TADODataSet.Create(nil);
   try
     ADODataSet.Connection := FADOConnection;
@@ -567,12 +575,13 @@ begin
 
   if not FADOConnection.Connected then
   begin
+    if FConnectionString = '' then Exit;
     FADOConnection.ConnectionString := FConnectionString;
     FADOConnection.Connected := True;
   end;
   if not FADOConnection.Connected then Exit;
 
-  SQL := Format('SELECT ID_USUARIO, NOME FROM USUARIO WHERE ID_EMPRESA = %d AND ATIVO = 1 ORDER BY NOME', [AIDEmpresa]); // ATIVO = 1 para True
+  SQL := Format('SELECT ID_USUARIO, NOME FROM USUARIO WHERE ID_EMPRESA = %d AND ATIVO = 1 ORDER BY NOME', [AIDEmpresa]);
   ADODataSet := TADODataSet.Create(nil);
   try
     ADODataSet.Connection := FADOConnection;
