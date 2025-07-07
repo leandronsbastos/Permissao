@@ -8,12 +8,14 @@ uses
   uPermissaoController;
 
 type
-  TItemMenuData = record
+  TItemMenuData = record // Este é o record usado para Node.Data
     ID: Integer;
     Tipo: Char;
     NomeForm: string;
   end;
-  PItemMenuData = ^TItemMenuData;
+  PItemMenuData = ^TItemMenuData; // Ponteiro para TItemMenuData
+
+  // TMenuItemStructure e TArrayOfMenuItemStructure vêm de uPermissaoController
 
   TfrmGerenciarPermissoes = class(TForm)
     pnlFiltros: TPanel;
@@ -296,12 +298,12 @@ procedure TfrmGerenciarPermissoes.PopularTreeView;
 var
   MenuEstruturaArray: TArrayOfMenuItemStructure;
   Node, PaiNode: TTreeNode;
-  Item: TMenuItemStructure;
+  ItemStruct: TMenuItemStructure; // Renomeado para não conflitar com 'Item' propriedade de TTreeNode
   MapaNos: TStringList;
   ChaveItem, ChavePai: string;
   I, J: Integer;
   ItensNaoProcessados: TList;
-  ItemPtr: ^TMenuItemStructure;
+  ItemPtr: PMenuItemStructure; // Usando tipo ponteiro de uPermissaoController
   FezProgressoNestaPassagem: Boolean;
   Tentativas: Integer;
 begin
@@ -330,18 +332,18 @@ begin
 
     for I := Low(MenuEstruturaArray) to High(MenuEstruturaArray) do
     begin
-      Item := MenuEstruturaArray[I];
-      ChaveItem := Item.Tipo + '_' + IntToStr(Item.ID);
-      if Item.Tipo = 'M' then
+      ItemStruct := MenuEstruturaArray[I];
+      ChaveItem := ItemStruct.Tipo + '_' + IntToStr(ItemStruct.ID);
+      if ItemStruct.Tipo = 'M' then
       begin
-        Node := tvMenu.Items.AddObject(nil, Item.Nome, nil);
-        SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
+        Node := tvMenu.Items.AddObject(nil, ItemStruct.Nome, nil);
+        SetItemMenuData(Node, ItemStruct.ID, ItemStruct.Tipo, ItemStruct.NomeForm);
         MapaNos.AddObject(ChaveItem, Node);
       end
       else
       begin
         New(ItemPtr);
-        ItemPtr^ := Item;
+        ItemPtr^ := ItemStruct;
         ItensNaoProcessados.Add(ItemPtr);
       end;
     end;
@@ -353,15 +355,15 @@ begin
       J := ItensNaoProcessados.Count - 1;
       while J >= 0 do
       begin
-        ItemPtr := PMenuItemStructure(ItensNaoProcessados[J]);
-        Item := ItemPtr^;
-        ChaveItem := Item.Tipo + '_' + IntToStr(Item.ID);
+        ItemPtr := PMenuItemStructure(ItensNaoProcessados[J]); // Cast para o tipo de ponteiro definido em uPermissaoController
+        ItemStruct := ItemPtr^;
+        ChaveItem := ItemStruct.Tipo + '_' + IntToStr(ItemStruct.ID);
 
         PaiNode := nil;
-        if Item.IDPaiSubmodulo <> 0 then
-          ChavePai := 'S_' + IntToStr(Item.IDPaiSubmodulo)
-        else if Item.IDPaiModulo <> 0 then
-          ChavePai := 'M_' + IntToStr(Item.IDPaiModulo)
+        if ItemStruct.IDPaiSubmodulo <> 0 then
+          ChavePai := 'S_' + IntToStr(ItemStruct.IDPaiSubmodulo)
+        else if ItemStruct.IDPaiModulo <> 0 then
+          ChavePai := 'M_' + IntToStr(ItemStruct.IDPaiModulo)
         else
           ChavePai := '';
 
@@ -374,11 +376,11 @@ begin
 
         if Assigned(PaiNode) then
         begin
-          Node := tvMenu.Items.AddChildObject(PaiNode, Item.Nome, nil);
-          SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
+          Node := tvMenu.Items.AddChildObject(PaiNode, ItemStruct.Nome, nil);
+          SetItemMenuData(Node, ItemStruct.ID, ItemStruct.Tipo, ItemStruct.NomeForm);
           MapaNos.AddObject(ChaveItem, Node);
 
-          FreeMem(ItemPtr);
+          Dispose(ItemPtr); // CORRIGIDO: Usar Dispose para ponteiros alocados com New
           ItensNaoProcessados.Delete(J);
           FezProgressoNestaPassagem := True;
         end;
@@ -398,7 +400,7 @@ begin
     end;
 
     for I := 0 to ItensNaoProcessados.Count - 1 do
-      FreeMem(PMenuItemStructure(ItensNaoProcessados[I]));
+      Dispose(PMenuItemStructure(ItensNaoProcessados[I])); // CORRIGIDO: Usar Dispose
 
   finally
     tvMenu.Items.EndUpdate;
@@ -413,13 +415,9 @@ begin
 end;
 
 procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
-var
-  i: Integer;
-  NodeData: PItemMenuData;
-  PermItem: TUserPermissionItem;
-  TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
-  PermString: string;
-  FoundInList: Boolean;
+var i: Integer; NodeData: PItemMenuData; PermItem: TUserPermissionItem;
+    TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
+    PermString: string; FoundInList: Boolean;
 begin
   if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
   NodeData := PItemMenuData(ANode.Data);
@@ -631,6 +629,8 @@ begin
 
     if ANodeData^.Tipo = 'R' then
     begin
+      // Ao marcar/desmarcar Acesso, as permissões granulares são baseadas no estado dos checkboxes
+      // apenas se Acesso estiver True. Se Acesso for False, todas são False.
       ValInserir  := ValAcesso and chkInserir.Checked;
       ValAlterar  := ValAcesso and chkAlterar.Checked;
       ValExcluir  := ValAcesso and chkExcluir.Checked;
