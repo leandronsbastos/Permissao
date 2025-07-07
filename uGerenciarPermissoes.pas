@@ -57,11 +57,6 @@ type
     FPermissoesModificadas: Boolean;
     FPermissoesEditadas: TStringList;
 
-    // Estas listas não são mais necessárias para a carga principal, mas mantidas para não quebrar chamadas de SimularCarga...
-    FEmpresasData: TStringList;
-    FUsuariosData: TStringList;
-    FMenuEstruturaSimulada: TStringList;
-
     procedure CarregarEmpresas;
     procedure CarregarUsuarios(AIDEmpresa: Integer);
     procedure LimparPermissoesVisuais;
@@ -117,11 +112,6 @@ begin
   FPermissoesModificadas := False;
   FPermissoesEditadas := TStringList.Create;
 
-  FEmpresasData := TStringList.Create;
-  FUsuariosData := TStringList.Create;
-  FMenuEstruturaSimulada := TStringList.Create;
-
-
   tvMenu.ReadOnly := False;
   gbPermissoesItem.Enabled := False;
   btnSalvarPermissoes.Enabled := False;
@@ -149,9 +139,6 @@ begin
   end;
   FreeAndNil(FPermissaoController);
   FreeAndNil(FPermissoesEditadas);
-  FreeAndNil(FEmpresasData);
-  FreeAndNil(FUsuariosData);
-  FreeAndNil(FMenuEstruturaSimulada);
 end;
 
 procedure TfrmGerenciarPermissoes.FormShow(Sender: TObject);
@@ -308,38 +295,16 @@ end;
 procedure TfrmGerenciarPermissoes.PopularTreeView;
 var
   MenuEstruturaArray: TArrayOfMenuItemStructure;
-  i: Integer;
-  Node, ParentNode: TTreeNode;
+  Node: TTreeNode; // ParentNode não é mais necessário na versão simplificada
   Item: TMenuItemStructure;
+  // i: Integer; // Não mais necessário para múltiplas passagens na versão simplificada
+  // ParentModuloID, ParentSubmoduloID: Integer; // Não mais necessário
+  // ItemTipo: Char; // Usar Item.Tipo diretamente
+  // ItemNome, NomeForm: string; // Usar Item.Nome, Item.NomeForm diretamente
 
-  function FindNodeByDataRec(StartNode: TTreeNode; SearchID: Integer; SearchTipo: Char): TTreeNode;
-  var j: Integer; NodeData: PItemMenuData;
-  begin
-    Result := nil;
-    if not Assigned(StartNode) then Exit;
-    NodeData := PItemMenuData(StartNode.Data);
-    if Assigned(NodeData) and (NodeData^.ID = SearchID) and (NodeData^.Tipo = SearchTipo) then
-    begin Result := StartNode; Exit; end;
-    for j := 0 to StartNode.Count - 1 do
-    begin Result := FindNodeByDataRec(StartNode.Item[j], SearchID, SearchTipo); if Assigned(Result) then Exit; end;
-  end;
-
-  function FindNodeInData(Tree: TTreeView; SearchID: Integer; SearchTipo: Char): TTreeNode;
-  var k: Integer; NodeData: PItemMenuData;
-  begin
-    Result := nil;
-    for k := 0 to Tree.Items.Count - 1 do
-    begin
-      NodeData := PItemMenuData(Tree.Items[k].Data);
-      if Assigned(NodeData) and (NodeData^.ID = SearchID) and (NodeData^.Tipo = SearchTipo) then
-      begin Result := Tree.Items[k]; Exit; end;
-      Result := FindNodeByDataRec(Tree.Items[k], SearchID, SearchTipo);
-      if Assigned(Result) then Exit;
-    end;
-  end;
-
+  // Funções FindNodeByDataRec e FindNodeInData não são mais necessárias para a versão simplificada
 begin
-  MemoLog.Lines.Add('Iniciando PopularTreeView...');
+  MemoLog.Lines.Add('Iniciando PopularTreeView (Versão Simplificada - Apenas Módulos)...');
   if not Assigned(FPermissaoController) then
   begin
     ShowMessage('Controller não inicializado em PopularTreeView.');
@@ -353,65 +318,34 @@ begin
     MemoLog.Lines.Add('FPermissaoController.CarregarEstruturaMenu retornou False.');
     Exit;
   end;
-  MemoLog.Lines.Add(Format('Estrutura de menu carregada pelo controller: %d itens.', [Length(MenuEstruturaArray)]));
+  MemoLog.Lines.Add(Format('Estrutura de menu carregada pelo controller: %d itens totais (antes de filtrar por Módulos).', [Length(MenuEstruturaArray)]));
 
   tvMenu.Items.BeginUpdate;
   try
     tvMenu.Items.Clear;
     for Item in MenuEstruturaArray do
     begin
-      if Item.Tipo = 'M' then
+      if Item.Tipo = 'M' then // APENAS ADICIONA MÓDULOS (NÍVEL RAIZ)
       begin
         Node := tvMenu.Items.AddObject(nil, Item.Nome, nil);
         SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
-      end;
-    end;
-
-    for i := 0 to Length(MenuEstruturaArray) -1 do
-    begin
-      for Item in MenuEstruturaArray do
-      begin
-        if Item.Tipo = 'S' then
-        begin
-          if Assigned(FindNodeInData(tvMenu, Item.ID, 'S')) then Continue;
-          ParentNode := nil;
-          if Item.IDPaiSubmodulo <> 0 then
-            ParentNode := FindNodeInData(tvMenu, Item.IDPaiSubmodulo, 'S')
-          else if Item.IDPaiModulo <> 0 then
-            ParentNode := FindNodeInData(tvMenu, Item.IDPaiModulo, 'M');
-          if Assigned(ParentNode) then
-          begin
-            Node := tvMenu.Items.AddChildObject(ParentNode, Item.Nome, nil);
-            SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
-          end;
-        end
-        else if Item.Tipo = 'R' then
-        begin
-          if Assigned(FindNodeInData(tvMenu, Item.ID, 'R')) then Continue;
-          ParentNode := nil;
-          if Item.IDPaiSubmodulo <> 0 then
-            ParentNode := FindNodeInData(tvMenu, Item.IDPaiSubmodulo, 'S')
-          else if Item.IDPaiModulo <> 0 then
-            ParentNode := FindNodeInData(tvMenu, Item.IDPaiModulo, 'M');
-          if Assigned(ParentNode) then
-          begin
-            Node := tvMenu.Items.AddChildObject(ParentNode, Item.Nome, nil);
-            SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
-          end;
-        end;
+        MemoLog.Lines.Add(Format('Adicionado Módulo: %s (ID: %d)', [Item.Nome, Item.ID]));
       end;
     end;
   finally
     tvMenu.Items.EndUpdate;
     if tvMenu.Items.Count > 0 then
       tvMenu.Selected := tvMenu.Items[0];
-    MemoLog.Lines.Add(Format('TreeView populado. %d nós raiz.', [tvMenu.Items.Count]));
+    MemoLog.Lines.Add(Format('TreeView populado (apenas Módulos). %d nós raiz.', [tvMenu.Items.Count]));
   end;
+
+  // Habilitar botões se houver itens, mesmo que apenas módulos.
+  // A lógica de permissão para módulos ainda é relevante (Acesso).
   btnLimparTodas.Enabled := (tvMenu.Items.Count > 0);
   btnSelecionarTodas.Enabled := (tvMenu.Items.Count > 0);
 end;
 
-// VERSÃO OTIMIZADA de AplicarPermissoesVisuaisParaNo
+
 procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
 var
   i: Integer;
@@ -419,14 +353,13 @@ var
   PermItem: TUserPermissionItem;
   TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
   PermString: string;
-  FoundPermissionForNode: Boolean;
+  FoundInList: Boolean; // Renomeado para clareza
 begin
   if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
   NodeData := PItemMenuData(ANode.Data);
 
   TemAcesso := False; PodeInserir := False; PodeAlterar := False;
   PodeExcluir := False; PodeImprimir := False;
-  FoundPermissionForNode := False;
 
   for PermItem in AUserPermissions do
   begin
@@ -437,7 +370,6 @@ begin
       PodeAlterar  := PermItem.Alterar;
       PodeExcluir  := PermItem.Excluir;
       PodeImprimir := PermItem.Imprimir;
-      FoundPermissionForNode := True;
       Break;
     end;
   end;
@@ -446,7 +378,11 @@ begin
                 BoolToStrDB(TemAcesso) + '|' + BoolToStrDB(PodeInserir) + '|' +
                 BoolToStrDB(PodeAlterar) + '|' + BoolToStrDB(PodeExcluir) + '|' +
                 BoolToStrDB(PodeImprimir);
-  FPermissoesEditadas.Add(PermString); // Adiciona estado inicial, FPermissoesEditadas foi limpa antes
+
+  // A lógica anterior de buscar e deletar de FPermissoesEditadas foi removida daqui
+  // pois FPermissoesEditadas é limpa antes desta função ser chamada pela primeira vez
+  // e esta função agora APENAS ADICIONA o estado inicial.
+  FPermissoesEditadas.Add(PermString);
 
   if ANode = tvMenu.Selected then
   begin
@@ -489,7 +425,7 @@ begin
   Screen.Cursor := crHourGlass;
   FPermissoesEditadas.Clear;
   try
-    PopularTreeView;
+    PopularTreeView; // Agora carrega apenas Módulos para teste
 
     if not FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions) then
     begin
@@ -503,7 +439,7 @@ begin
     if tvMenu.Items.Count > 0 then
     begin
        for i := 0 to tvMenu.Items.Count -1 do
-          AplicarPermissoesVisuaisParaNo(tvMenu.Items[i], UserPermissions); // Chama a versão otimizada
+          AplicarPermissoesVisuaisParaNo(tvMenu.Items[i], UserPermissions);
 
        if Assigned(tvMenu.Selected) then
          AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions)
@@ -617,16 +553,14 @@ var idx: Integer; tmpPermInfo: TStringList; foundInList: Boolean; tmpLinha: stri
 begin
   if not Assigned(ANodeData) then Exit; foundInList := False; tmpPermInfo := TStringList.Create;
   try
-    ValAcesso := ACheckedState; // O Acesso é o principal driver aqui
+    ValAcesso := chkAcesso.Checked; // Usa o estado ATUAL do checkbox de acesso
 
     if ANodeData^.Tipo = 'R' then
     begin
-      // Se o Acesso estiver sendo marcado (ACheckedState = True), usamos o estado atual dos checkboxes granulares.
-      // Se o Acesso estiver sendo desmarcado (ACheckedState = False), todas as permissões granulares também são False.
-      ValInserir  := ValAcesso and chkInserir.Checked;
-      ValAlterar  := ValAcesso and chkAlterar.Checked;
-      ValExcluir  := ValAcesso and chkExcluir.Checked;
-      ValImprimir := ValAcesso and chkImprimir.Checked;
+      ValInserir  := chkAcesso.Checked and chkInserir.Checked;
+      ValAlterar  := chkAcesso.Checked and chkAlterar.Checked;
+      ValExcluir  := chkAcesso.Checked and chkExcluir.Checked;
+      ValImprimir := chkAcesso.Checked and chkImprimir.Checked;
     end else
     begin
       ValInserir := False; ValAlterar := False; ValExcluir := False; ValImprimir := False;
@@ -669,7 +603,6 @@ begin
   FPermissoesModificadas := True;
   btnSalvarPermissoes.Enabled := True;
 
-  // ACheckedState é o novo estado do chkAcesso, mas a função lerá todos os checkboxes
   MarcarNoAtualizarListaEditada(NodeData, chkAcesso.Checked);
 end;
 
@@ -789,7 +722,6 @@ procedure TfrmGerenciarPermissoes.ProcessarNoParaLimpezaTotal(ANode: TTreeNode);
 var j: Integer; NodeData: PItemMenuData;
 begin
   if not Assigned(ANode) then Exit; NodeData := GetItemMenuData(ANode);
-  // Força todos os checkboxes para False antes de atualizar a lista
   if ANode = tvMenu.Selected then
   begin
       chkAcesso.Checked := False; chkInserir.Checked := False; chkAlterar.Checked := False;
@@ -797,7 +729,7 @@ begin
   end;
   MarcarNoAtualizarListaEditada(NodeData, False);
 
-  if ANode = tvMenu.Selected then // Re-aplica o estado visual desabilitado se for rotina
+  if ANode = tvMenu.Selected then
   begin
       if NodeData^.Tipo <> 'R' then
       begin
@@ -813,7 +745,6 @@ procedure TfrmGerenciarPermissoes.ProcessarNoParaSelecaoTotal(ANode: TTreeNode);
 var j: Integer; NodeData: PItemMenuData;
 begin
   if not Assigned(ANode) then Exit; NodeData := GetItemMenuData(ANode);
-  // Força todos os checkboxes para True antes de atualizar a lista
   if ANode = tvMenu.Selected then
   begin
       chkAcesso.Checked := True;
@@ -825,7 +756,7 @@ begin
   end;
   MarcarNoAtualizarListaEditada(NodeData, True);
 
-  if ANode = tvMenu.Selected then // Re-aplica o estado visual habilitado se for rotina
+  if ANode = tvMenu.Selected then
   begin
       if NodeData^.Tipo = 'R' then
       begin
