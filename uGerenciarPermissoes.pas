@@ -8,14 +8,12 @@ uses
   uPermissaoController;
 
 type
-  TItemMenuData = record // Este é o record usado para Node.Data
+  TItemMenuData = record
     ID: Integer;
     Tipo: Char;
     NomeForm: string;
   end;
-  PItemMenuData = ^TItemMenuData; // Ponteiro para TItemMenuData
-
-  // TMenuItemStructure e TArrayOfMenuItemStructure vêm de uPermissaoController
+  PItemMenuData = ^TItemMenuData;
 
   TfrmGerenciarPermissoes = class(TForm)
     pnlFiltros: TPanel;
@@ -182,7 +180,7 @@ begin
   try
     if Assigned(FPermissaoController) then
     begin
-      if not FPermissaoController.CarregarEmpresas(TempEmpresasList) then
+      if not FPermissaoController.CarregarEmpresas(TempEmpresasList) then // Passa TStringList, Controller espera TStringList
       begin
         ShowMessage('Falha ao carregar empresas do banco de dados.');
         MemoLog.Lines.Add('FPermissaoController.CarregarEmpresas retornou False.');
@@ -231,7 +229,7 @@ begin
   try
     if Assigned(FPermissaoController) then
     begin
-      if not FPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa, TempUsuariosList) then
+      if not FPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa, TempUsuariosList) then // Passa TStringList, Controller espera TStringList
       begin
         ShowMessage(Format('Falha ao carregar usuários para a empresa ID: %d.', [AIDEmpresa]));
         MemoLog.Lines.Add(Format('FPermissaoController.CarregarUsuariosPorEmpresa retornou False para Empresa ID: %d.', [AIDEmpresa]));
@@ -298,12 +296,12 @@ procedure TfrmGerenciarPermissoes.PopularTreeView;
 var
   MenuEstruturaArray: TArrayOfMenuItemStructure;
   Node, PaiNode: TTreeNode;
-  ItemStruct: TMenuItemStructure; // Renomeado para não conflitar com 'Item' propriedade de TTreeNode
+  ItemStruct: TMenuItemStructure;
   MapaNos: TStringList;
   ChaveItem, ChavePai: string;
   I, J: Integer;
   ItensNaoProcessados: TList;
-  ItemPtr: PMenuItemStructure; // Usando tipo ponteiro de uPermissaoController
+  ItemPtr: PMenuItemStructure; // CORRIGIDO: Usar PMenuItemStructure de uPermissaoController
   FezProgressoNestaPassagem: Boolean;
   Tentativas: Integer;
 begin
@@ -327,7 +325,7 @@ begin
   MapaNos := TStringList.Create;
   MapaNos.Sorted := False;
   ItensNaoProcessados := TList.Create;
-  try
+  try // TRY PRINCIPAL para garantir liberação de MapaNos e ItensNaoProcessados
     tvMenu.Items.Clear;
 
     for I := Low(MenuEstruturaArray) to High(MenuEstruturaArray) do
@@ -343,7 +341,7 @@ begin
       else
       begin
         New(ItemPtr);
-        ItemPtr^ := ItemStruct;
+        ItemPtr^ := ItemStruct; // ItemStruct é TMenuItemStructure, ItemPtr é PMenuItemStructure
         ItensNaoProcessados.Add(ItemPtr);
       end;
     end;
@@ -355,7 +353,7 @@ begin
       J := ItensNaoProcessados.Count - 1;
       while J >= 0 do
       begin
-        ItemPtr := PMenuItemStructure(ItensNaoProcessados[J]); // Cast para o tipo de ponteiro definido em uPermissaoController
+        ItemPtr := PMenuItemStructure(ItensNaoProcessados[J]); // CORRIGIDO
         ItemStruct := ItemPtr^;
         ChaveItem := ItemStruct.Tipo + '_' + IntToStr(ItemStruct.ID);
 
@@ -380,39 +378,42 @@ begin
           SetItemMenuData(Node, ItemStruct.ID, ItemStruct.Tipo, ItemStruct.NomeForm);
           MapaNos.AddObject(ChaveItem, Node);
 
-          Dispose(ItemPtr); // CORRIGIDO: Usar Dispose para ponteiros alocados com New
+          Dispose(ItemPtr); // CORRIGIDO
           ItensNaoProcessados.Delete(J);
           FezProgressoNestaPassagem := True;
         end;
         Dec(J);
-      end;
+      end; // Fim While J
       Inc(Tentativas);
       if not FezProgressoNestaPassagem and (ItensNaoProcessados.Count > 0) then
       begin
         MemoLog.Lines.Add(Format('AVISO: %d itens do menu não puderam ser hierarquizados (pais não encontrados ou dependência circular).', [ItensNaoProcessados.Count]));
         for I := 0 to ItensNaoProcessados.Count - 1 do
         begin
-            ItemPtr := PMenuItemStructure(ItensNaoProcessados[I]);
+            ItemPtr := PMenuItemStructure(ItensNaoProcessados[I]); // CORRIGIDO
             MemoLog.Lines.Add(Format('  Órfão: %s (Tipo: %s, ID: %d, PaiM: %d, PaiS: %d)', [ItemPtr^.Nome, ItemPtr^.Tipo, ItemPtr^.ID, ItemPtr^.IDPaiModulo, ItemPtr^.IDPaiSubmodulo]));
         end;
         Break;
       end;
-    end;
+    end; // Fim While ItensNaoProcessados
 
     for I := 0 to ItensNaoProcessados.Count - 1 do
-      Dispose(PMenuItemStructure(ItensNaoProcessados[I])); // CORRIGIDO: Usar Dispose
+      Dispose(PMenuItemStructure(ItensNaoProcessados[I])); // CORRIGIDO
+    ItensNaoProcessados.Clear; // Limpa a lista após liberar os ponteiros
 
-  finally
+  finally // Finally do TRY PRINCIPAL
     tvMenu.Items.EndUpdate;
     FreeAndNil(MapaNos);
-    FreeAndNil(ItensNaoProcessados);
+    FreeAndNil(ItensNaoProcessados); // Garante que a lista seja liberada
     if tvMenu.Items.Count > 0 then
       tvMenu.Selected := tvMenu.Items[0];
     MemoLog.Lines.Add(Format('TreeView populado. %d nós raiz.', [tvMenu.Items.Count]));
-  end;
+  end; // Fim do TRY PRINCIPAL
+
   btnLimparTodas.Enabled := (tvMenu.Items.Count > 0);
   btnSelecionarTodas.Enabled := (tvMenu.Items.Count > 0);
-end;
+end; // Fim PopularTreeView
+
 
 procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
 var i: Integer; NodeData: PItemMenuData; PermItem: TUserPermissionItem;
@@ -629,8 +630,6 @@ begin
 
     if ANodeData^.Tipo = 'R' then
     begin
-      // Ao marcar/desmarcar Acesso, as permissões granulares são baseadas no estado dos checkboxes
-      // apenas se Acesso estiver True. Se Acesso for False, todas são False.
       ValInserir  := ValAcesso and chkInserir.Checked;
       ValAlterar  := ValAcesso and chkAlterar.Checked;
       ValExcluir  := ValAcesso and chkExcluir.Checked;
