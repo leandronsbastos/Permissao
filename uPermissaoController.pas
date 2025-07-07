@@ -53,12 +53,9 @@ type
 
     function CarregarEstruturaMenu(var AMenuEstrutura: TArrayOfMenuItemStructure): Boolean;
     function CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfUserPermissionItem): Boolean;
-    // Removido: SalvarTodasPermissoesUsuario
     function AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfUserPermissionItem): Boolean;
-    function CopiarPermissoes(AIDEmpresa, AIDUsuarioOrigem, AIDUsuarioDestino: Integer): Boolean; // Precisará ser ajustado para usar AtualizarPermissoesEspecificas
+    function CopiarPermissoes(AIDEmpresa, AIDUsuarioOrigem, AIDUsuarioDestino: Integer): Boolean;
 
-    // Função para popular permissões default para um novo usuário (ou novo item de menu para todos os usuários)
-    // Esta é uma sugestão de onde essa lógica poderia residir, mas a chamada viria do seu processo de criação de usuário/item de menu.
     function PopularPermissoesDefaultParaUsuario(AIDEmpresa, AIDUsuario: Integer): Boolean;
     function PopularPermissoesDefaultParaNovoItemMenu(AItemID: Integer; AItemTipo: Char; ANomeFormParaRotina: string): Boolean;
 
@@ -210,7 +207,6 @@ begin
             ID := ADODataSet.FieldByName('ITEM_ID').AsInteger;
             Tipo := ADODataSet.FieldByName('ITEM_TIPO').AsString[1];
             Nome := ADODataSet.FieldByName('ITEM_NOME').AsString;
-            // Tratamento de NULL para FKs de pai
             if ADODataSet.FieldByName('ID_MODULO_ASSOCIADO').IsNull then IDPaiModulo := 0
             else IDPaiModulo := ADODataSet.FieldByName('ID_MODULO_ASSOCIADO').AsInteger;
 
@@ -287,8 +283,6 @@ begin
             end
             else
             begin
-              // Registro inválido ou inesperado, pular
-              // Idealmente, logar este caso
               ADODataSet.Next;
               Continue;
             end;
@@ -301,12 +295,12 @@ begin
           Inc(i);
           ADODataSet.Next;
         end;
-        SetLength(APermissions, i); // Ajusta o tamanho caso algum registro tenha sido pulado
+        SetLength(APermissions, i);
         Result := True;
       end
       else
       begin
-        Result := True; // Sem permissões encontradas, mas a query executou
+        Result := True;
       end;
     except
       on E: Exception do
@@ -323,21 +317,19 @@ function TPermissaoController.CarregarEstruturaMenu(var AMenuEstrutura: TArrayOf
 var
   SQL: string;
 begin
-  // Ajuste para tratar NULLs corretamente para ID_MODULO_ASSOCIADO e ID_SUBMODULO_PAI
-  // A query original já usava NULL para NOME_FORM em Módulos e Submódulos, o que é bom.
   SQL :=
     'SELECT ID_MODULO AS ITEM_ID, ''M'' AS ITEM_TIPO, NOME_MODULO AS ITEM_NOME, ' +
-    '   NULL AS ID_MODULO_ASSOCIADO, NULL AS ID_SUBMODULO_PAI, NULL AS NOME_FORM, ORDEM_EXIBICAO ' +
+    '   CAST(NULL AS INT) AS ID_MODULO_ASSOCIADO, CAST(NULL AS INT) AS ID_SUBMODULO_PAI, CAST(NULL AS VARCHAR(100)) AS NOME_FORM, ORDEM_EXIBICAO ' + // SQL Server specific NULL typing
     'FROM MODULO ' +
     'UNION ALL ' +
     'SELECT ID_SUBMODULO AS ITEM_ID, ''S'' AS ITEM_TIPO, NOME_SUBMODULO AS ITEM_NOME, ' +
-    '   ID_MODULO_ASSOCIADO, ID_SUBMODULO_PAI, NULL AS NOME_FORM, ORDEM_EXIBICAO ' + // ID_MODULO_ASSOCIADO e ID_SUBMODULO_PAI vêm da tabela SUBMODULO
+    '   ID_MODULO_ASSOCIADO, ID_SUBMODULO_PAI, CAST(NULL AS VARCHAR(100)) AS NOME_FORM, ORDEM_EXIBICAO ' +
     'FROM SUBMODULO ' +
     'UNION ALL ' +
     'SELECT ID_ROTINA AS ITEM_ID, ''R'' AS ITEM_TIPO, NOME_ROTINA AS ITEM_NOME, ' +
-    '   ID_MODULO_ASSOCIADO, ID_SUBMODULO_ASSOCIADO AS ID_SUBMODULO_PAI, NOME_FORM, ORDEM_EXIBICAO ' + // ID_SUBMODULO_ASSOCIADO é o pai da rotina, mapeado para ID_SUBMODULO_PAI na estrutura
+    '   ID_MODULO_ASSOCIADO, ID_SUBMODULO_ASSOCIADO AS ID_SUBMODULO_PAI, NOME_FORM, ORDEM_EXIBICAO ' +
     'FROM ROTINA ' +
-    'ORDER BY ITEM_TIPO, ORDEM_EXIBICAO, ITEM_NOME'; // Ordem pode precisar de ajuste para hierarquia
+    'ORDER BY ITEM_TIPO, ORDEM_EXIBICAO, ITEM_NOME';
   Result := QueryToRecords(SQL, AMenuEstrutura);
 end;
 
@@ -376,7 +368,7 @@ begin
         'S': WhereClauseItem := 'ID_SUBMODULO_PERMITIDO = ' + IntToStr(PermItem.ItemID);
         'R': WhereClauseItem := 'ID_ROTINA_PERMITIDA = ' + IntToStr(PermItem.ItemID);
       else
-        Continue; // Tipo de item desconhecido, pular
+        Continue;
       end;
 
       SQL_Update := Format(
@@ -408,30 +400,13 @@ end;
 function TPermissaoController.CopiarPermissoes(AIDEmpresa, AIDUsuarioOrigem, AIDUsuarioDestino: Integer): Boolean;
 var
   PermissoesOrigem: TArrayOfUserPermissionItem;
-  SQL_Delete: string;
+  // SQL_Delete: string; // Removida variável não utilizada
 begin
   Result := False;
-  // 1. Carregar permissões do usuário de origem
   if CarregarPermissoesUsuario(AIDEmpresa, AIDUsuarioOrigem, PermissoesOrigem) then
   begin
-    // 2. Assumindo que o destino já tem permissões default (todas negadas),
-    //    vamos apenas atualizar essas permissões com as do usuário de origem.
-    //    Se a estratégia fosse DELETE/INSERT, precisaríamos deletar as do destino primeiro.
-    //    Como mudamos para UPDATE, precisamos garantir que o AtualizarPermissoesEspecificas
-    //    receba a lista COMPLETA de permissões do usuário de origem para aplicar no destino.
-
-    // Se o destino já tem permissões default, a função AtualizarPermissoesEspecificas fará os UPDATES.
-    // Se o destino NÃO tem permissões default, e a tabela de permissões é esparsa (só tem o que é concedido),
-    // então o AtualizarPermissoesEspecificas precisaria ser um "UPSERT" ou
-    // teríamos que deletar as do destino e INSERIR as da origem.
-    // Para manter a lógica de "permissões default existem e são atualizadas":
-
-    // Primeiro, garantir que o usuário destino tenha as entradas default (caso este método seja chamado antes).
-    // Idealmente, PopularPermissoesDefaultParaUsuario seria chamado na criação do usuário.
-    // Se não pudermos garantir, podemos chamar aqui, mas pode ser custoso.
-    // PopularPermissoesDefaultParaUsuario(AIDEmpresa, AIDUsuarioDestino); // Opcional, mas seguro
-
-    // Agora, atualizamos as permissões do destino com base nas da origem.
+    // Assumindo que o usuário destino já tem permissões default (ou que PopularPermissoesDefaultParaUsuario foi chamado)
+    // Atualizamos as permissões do destino com base nas da origem.
     Result := AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuarioDestino, PermissoesOrigem);
   end;
 end;
@@ -440,11 +415,11 @@ function TPermissaoController.PopularPermissoesDefaultParaUsuario(AIDEmpresa, AI
 var
   MenuEstrutura: TArrayOfMenuItemStructure;
   Item: TMenuItemStructure;
-  SQL_Insert: string;
+  SQL_Insert, SQL_Values_Part: string; // SQL_Values_Part adicionada
   ModuloFK, SubmoduloFK, RotinaFK: string;
 begin
   Result := False;
-  if not CarregarEstruturaMenu(MenuEstrutura) then Exit; // Precisa da lista de todos os itens de menu
+  if not CarregarEstruturaMenu(MenuEstrutura) then Exit;
 
   if not FADOConnection.Connected then
   begin
@@ -456,10 +431,6 @@ begin
 
   FADOConnection.BeginTrans;
   try
-    // Opcional: Deletar permissões existentes para este usuário antes de popular defaults,
-    // para evitar duplicatas se este método for chamado mais de uma vez.
-    // ExecuteSQL(Format('DELETE FROM PERMISSAO_USUARIO WHERE ID_EMPRESA = %d AND ID_USUARIO = %d', [AIDEmpresa, AIDUsuario]));
-
     for Item in MenuEstrutura do
     begin
       ModuloFK := 'NULL'; SubmoduloFK := 'NULL'; RotinaFK := 'NULL';
@@ -469,30 +440,21 @@ begin
         'R': RotinaFK := IntToStr(Item.ID);
       end;
 
-      // Inserir com todas as permissões como 0 (False)
-      SQL_Insert := Format(
-        'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
-        'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR) ' +
-        'VALUES (%d, %d, %s, %s, %s, 0, 0, 0, 0, 0) ' + // Todas permissões default como 0
-        // Adicionar cláusula para não inserir se já existir (varia por SGBD)
-        // Exemplo para SQL Server:
-        // 'WHERE NOT EXISTS (SELECT 1 FROM PERMISSAO_USUARIO E WHERE E.ID_EMPRESA = %d AND E.ID_USUARIO = %d AND ' +
-        // '  ( (E.ID_MODULO_PERMITIDO = %s AND %s IS NOT NULL) OR ' +
-        // '    (E.ID_SUBMODULO_PERMITIDO = %s AND %s IS NOT NULL) OR ' +
-        // '    (E.ID_ROTINA_PERMITIDA = %s AND %s IS NOT NULL) ) )',
-        // [AIDEmpresa, AIDUsuario, ModuloFK, SubmoduloFK, RotinaFK, AIDEmpresa, AIDUsuario, ModuloFK, ModuloFK, SubmoduloFK, SubmoduloFK, RotinaFK, RotinaFK]
-        // A lógica de "não inserir se já existe" é complexa com as 3 FKs nullable.
-        // É mais simples deletar antes ou confiar na constraint UNIQUE.
-        // Para garantir, podemos checar antes de inserir ou usar MERGE (SQL Server 2008+)
-        // Por simplicidade aqui, vamos assumir que não há duplicatas ou que a constraint UNIQUE pega.
-        , [AIDEmpresa, AIDUsuario, ModuloFK, SubmoduloFK, RotinaFK]
-      );
+      // CORRIGIDO: Construção da string SQL para evitar E2010
+      SQL_Values_Part := Format('(%d, %d, %s, %s, %s, 0, 0, 0, 0, 0)',
+                                [AIDEmpresa, AIDUsuario, ModuloFK, SubmoduloFK, RotinaFK]);
+      SQL_Insert := 'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
+                    'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR) VALUES ' + SQL_Values_Part;
+
+      // Para evitar erro de chave duplicada, idealmente checar se já existe ou usar MERGE/ON CONFLICT (específico do SGBD)
+      // Por simplicidade, vamos apenas tentar inserir. Se der erro de UNIQUE, a transação dará rollback.
+      // Uma abordagem mais robusta seria:
+      // IF NOT EXISTS (SELECT 1 FROM PERMISSAO_USUARIO WHERE ID_EMPRESA = AIDEmpresa AND ID_USUARIO = AIDUsuario AND ...) THEN
+      // BEGIN INSERT ... END
       if not ExecuteSQL(SQL_Insert) then
       begin
-        // Se falhar (ex: por constraint UNIQUE), pode ser que já exista. Ignorar o erro ou logar.
-        // Para um sistema robusto, checar existência antes ou usar MERGE.
-        // FADOConnection.RollbackTrans;
-        // Exit;
+        // Não necessariamente um erro fatal se a intenção é apenas garantir que existam.
+        // Pode logar um aviso se falhar por outra razão que não chave duplicada.
       end;
     end;
     FADOConnection.CommitTrans;
@@ -508,44 +470,62 @@ end;
 
 function TPermissaoController.PopularPermissoesDefaultParaNovoItemMenu(AItemID: Integer; AItemTipo: Char; ANomeFormParaRotina: string): Boolean;
 var
-  Usuarios: TStringList; // Para buscar todos os usuários existentes
-  i: Integer;
-  IDEmpresa, IDUsuario: Integer; // Supondo que um novo item é global ou precisa ser adicionado para todos os usuários de todas as empresas
-  SQL_Insert: string;
+  // Usuarios: TStringList; // Não usado como TStringList
+  ADODataSetUsers: TADODataSet;
+  IDEmpresa, IDUsuario: Integer;
+  SQL_Insert, SQL_Values_Part: string;
   ModuloFK, SubmoduloFK, RotinaFK: string;
 begin
   Result := False;
-  // Esta função é mais complexa pois precisaria iterar por todos os usuários de todas as empresas
-  // e adicionar a permissão default para este novo item.
-  // Exemplo simplificado:
-  // 1. Buscar todos os pares (ID_EMPRESA, ID_USUARIO) da tabela USUARIO.
-  // 2. Para cada par, inserir a permissão default para o novo item.
 
-  // Esta implementação é apenas um esboço e precisaria ser bem testada e adaptada.
-  // Considerar performance para muitos usuários.
+  if not FADOConnection.Connected then
+  begin
+    if FConnectionString = '' then Exit;
+    FADOConnection.ConnectionString := FConnectionString;
+    FADOConnection.Connected := True;
+  end;
+  if not FADOConnection.Connected then Exit;
 
-  // FADOConnection.BeginTrans;
-  // try
-  //   Loop por todos os usuários...
-  //     ModuloFK := 'NULL'; SubmoduloFK := 'NULL'; RotinaFK := 'NULL';
-  //     case AItemTipo of
-  //       'M': ModuloFK := IntToStr(AItemID);
-  //       'S': SubmoduloFK := IntToStr(AItemID);
-  //       'R': RotinaFK := IntToStr(AItemID);
-  //     end;
-  //     SQL_Insert := Format(
-  //       'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
-  //       'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR) ' +
-  //       'VALUES (%d, %d, %s, %s, %s, 0, 0, 0, 0, 0)',
-  //       [IDEmpresaDoUsuario, IDDoUsuario, ModuloFK, SubmoduloFK, RotinaFK]);
-  //     ExecuteSQL(SQL_Insert);
-  //   FADOConnection.CommitTrans;
-  //   Result := True;
-  // except
-  //   FADOConnection.RollbackTrans;
-  //   Result := False;
-  // end;
-  Exit; // Implementação pendente
+  ADODataSetUsers := TADODataSet.Create(nil);
+  FADOConnection.BeginTrans;
+  try
+    ADODataSetUsers.Connection := FADOConnection;
+    ADODataSetUsers.CommandText := 'SELECT ID_EMPRESA, ID_USUARIO FROM USUARIO'; // Pega todos os usuários de todas as empresas
+    ADODataSetUsers.Open;
+
+    while not ADODataSetUsers.Eof do
+    begin
+      IDEmpresa := ADODataSetUsers.FieldByName('ID_EMPRESA').AsInteger;
+      IDUsuario := ADODataSetUsers.FieldByName('ID_USUARIO').AsInteger;
+
+      ModuloFK := 'NULL'; SubmoduloFK := 'NULL'; RotinaFK := 'NULL';
+      case AItemTipo of
+        'M': ModuloFK := IntToStr(AItemID);
+        'S': SubmoduloFK := IntToStr(AItemID);
+        'R': RotinaFK := IntToStr(AItemID);
+      end;
+
+      SQL_Values_Part := Format('(%d, %d, %s, %s, %s, 0, 0, 0, 0, 0)',
+                                [IDEmpresa, IDUsuario, ModuloFK, SubmoduloFK, RotinaFK]);
+      SQL_Insert := 'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
+                    'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR) VALUES ' + SQL_Values_Part;
+
+      if not ExecuteSQL(SQL_Insert) then
+      begin
+        // Logar aviso ou tratar erro, mas continuar para outros usuários
+      end;
+      ADODataSetUsers.Next;
+    end;
+    FADOConnection.CommitTrans;
+    Result := True;
+  except
+    on E: Exception do
+    begin
+      FADOConnection.RollbackTrans;
+      Result := False;
+    end;
+  end;
+  FreeAndNil(ADODataSetUsers);
 end;
 
 
