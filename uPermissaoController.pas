@@ -15,6 +15,7 @@ type
     NomeForm: string;
     OrdemExibicao: Integer;
   end;
+  PMenuItemStructure = ^TMenuItemStructure; // Declaração do tipo ponteiro
   TArrayOfMenuItemStructure = array of TMenuItemStructure;
 
   TUserPermissionItem = record
@@ -26,6 +27,7 @@ type
     Excluir: Boolean;
     Imprimir: Boolean;
   end;
+  PUserPermissionItem = ^TUserPermissionItem; // Declaração do tipo ponteiro
   TArrayOfUserPermissionItem = array of TUserPermissionItem;
 
   TPermissaoController = class
@@ -56,7 +58,6 @@ type
     function ValidarPermissao(AIDEmpresa, AIDUsuario: Integer; ANomeForm: string; out PInserir, PAlterar, PExcluir, PImprimir: Boolean): Boolean; overload;
     function ValidarPermissao(AIDEmpresa, AIDUsuario: Integer; AItemID: Integer; AItemTipo: Char; out PInserir, PAlterar, PExcluir, PImprimir: Boolean): Boolean; overload;
 
-    // Alterado para TStringList para resolver E2033
     function CarregarEmpresas(var EmpresasList: TStringList): Boolean;
     function CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStringList): Boolean;
   end;
@@ -529,7 +530,7 @@ begin
   end;
 end;
 
-function TPermissaoController.CarregarEmpresas(var EmpresasList: TStringList): Boolean; // Alterado para TStringList
+function TPermissaoController.CarregarEmpresas(var EmpresasList: TStringList): Boolean;
 var
   SQL: string;
   ADODataSet: TADODataSet;
@@ -566,7 +567,7 @@ begin
   FreeAndNil(ADODataSet);
 end;
 
-function TPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStringList): Boolean; // Alterado para TStringList
+function TPermissaoController.CarregarUsuariosPorEmpresa(AIDEmpresa: Integer; var UsuariosList: TStringList): Boolean;
 var
   SQL: string;
   ADODataSet: TADODataSet;
