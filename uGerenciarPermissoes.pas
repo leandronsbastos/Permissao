@@ -295,16 +295,17 @@ end;
 procedure TfrmGerenciarPermissoes.PopularTreeView;
 var
   MenuEstruturaArray: TArrayOfMenuItemStructure;
-  Node: TTreeNode; // ParentNode não é mais necessário na versão simplificada
+  Node, PaiNode: TTreeNode;
   Item: TMenuItemStructure;
-  // i: Integer; // Não mais necessário para múltiplas passagens na versão simplificada
-  // ParentModuloID, ParentSubmoduloID: Integer; // Não mais necessário
-  // ItemTipo: Char; // Usar Item.Tipo diretamente
-  // ItemNome, NomeForm: string; // Usar Item.Nome, Item.NomeForm diretamente
-
-  // Funções FindNodeByDataRec e FindNodeInData não são mais necessárias para a versão simplificada
+  MapaNos: TStringList;
+  ChaveItem, ChavePai: string;
+  I, J: Integer;
+  ItensNaoProcessados: TList;
+  ItemPtr: ^TMenuItemStructure;
+  FezProgressoNestaPassagem: Boolean;
+  Tentativas: Integer;
 begin
-  MemoLog.Lines.Add('Iniciando PopularTreeView (Versão Simplificada - Apenas Módulos)...');
+  MemoLog.Lines.Add('Iniciando PopularTreeView (Versão Otimizada com Mapa)...');
   if not Assigned(FPermissaoController) then
   begin
     ShowMessage('Controller não inicializado em PopularTreeView.');
@@ -318,33 +319,98 @@ begin
     MemoLog.Lines.Add('FPermissaoController.CarregarEstruturaMenu retornou False.');
     Exit;
   end;
-  MemoLog.Lines.Add(Format('Estrutura de menu carregada pelo controller: %d itens totais (antes de filtrar por Módulos).', [Length(MenuEstruturaArray)]));
+  MemoLog.Lines.Add(Format('Estrutura de menu carregada: %d itens.', [Length(MenuEstruturaArray)]));
 
   tvMenu.Items.BeginUpdate;
+  MapaNos := TStringList.Create;
+  MapaNos.Sorted := False;
+  ItensNaoProcessados := TList.Create;
   try
     tvMenu.Items.Clear;
-    for Item in MenuEstruturaArray do
+
+    for I := Low(MenuEstruturaArray) to High(MenuEstruturaArray) do
     begin
-      if Item.Tipo = 'M' then // APENAS ADICIONA MÓDULOS (NÍVEL RAIZ)
+      Item := MenuEstruturaArray[I];
+      ChaveItem := Item.Tipo + '_' + IntToStr(Item.ID);
+      if Item.Tipo = 'M' then
       begin
         Node := tvMenu.Items.AddObject(nil, Item.Nome, nil);
         SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
-        MemoLog.Lines.Add(Format('Adicionado Módulo: %s (ID: %d)', [Item.Nome, Item.ID]));
+        MapaNos.AddObject(ChaveItem, Node);
+      end
+      else
+      begin
+        New(ItemPtr);
+        ItemPtr^ := Item;
+        ItensNaoProcessados.Add(ItemPtr);
       end;
     end;
+
+    Tentativas := 0;
+    while (ItensNaoProcessados.Count > 0) and (Tentativas < Length(MenuEstruturaArray) + 5) do
+    begin
+      FezProgressoNestaPassagem := False;
+      J := ItensNaoProcessados.Count - 1;
+      while J >= 0 do
+      begin
+        ItemPtr := PMenuItemStructure(ItensNaoProcessados[J]);
+        Item := ItemPtr^;
+        ChaveItem := Item.Tipo + '_' + IntToStr(Item.ID);
+
+        PaiNode := nil;
+        if Item.IDPaiSubmodulo <> 0 then
+          ChavePai := 'S_' + IntToStr(Item.IDPaiSubmodulo)
+        else if Item.IDPaiModulo <> 0 then
+          ChavePai := 'M_' + IntToStr(Item.IDPaiModulo)
+        else
+          ChavePai := '';
+
+        if ChavePai <> '' then
+        begin
+          I := MapaNos.IndexOf(ChavePai);
+          if I <> -1 then
+            PaiNode := TTreeNode(MapaNos.Objects[I]);
+        end;
+
+        if Assigned(PaiNode) then
+        begin
+          Node := tvMenu.Items.AddChildObject(PaiNode, Item.Nome, nil);
+          SetItemMenuData(Node, Item.ID, Item.Tipo, Item.NomeForm);
+          MapaNos.AddObject(ChaveItem, Node);
+
+          FreeMem(ItemPtr);
+          ItensNaoProcessados.Delete(J);
+          FezProgressoNestaPassagem := True;
+        end;
+        Dec(J);
+      end;
+      Inc(Tentativas);
+      if not FezProgressoNestaPassagem and (ItensNaoProcessados.Count > 0) then
+      begin
+        MemoLog.Lines.Add(Format('AVISO: %d itens do menu não puderam ser hierarquizados (pais não encontrados ou dependência circular).', [ItensNaoProcessados.Count]));
+        for I := 0 to ItensNaoProcessados.Count - 1 do
+        begin
+            ItemPtr := PMenuItemStructure(ItensNaoProcessados[I]);
+            MemoLog.Lines.Add(Format('  Órfão: %s (Tipo: %s, ID: %d, PaiM: %d, PaiS: %d)', [ItemPtr^.Nome, ItemPtr^.Tipo, ItemPtr^.ID, ItemPtr^.IDPaiModulo, ItemPtr^.IDPaiSubmodulo]));
+        end;
+        Break;
+      end;
+    end;
+
+    for I := 0 to ItensNaoProcessados.Count - 1 do
+      FreeMem(PMenuItemStructure(ItensNaoProcessados[I]));
+
   finally
     tvMenu.Items.EndUpdate;
+    FreeAndNil(MapaNos);
+    FreeAndNil(ItensNaoProcessados);
     if tvMenu.Items.Count > 0 then
       tvMenu.Selected := tvMenu.Items[0];
-    MemoLog.Lines.Add(Format('TreeView populado (apenas Módulos). %d nós raiz.', [tvMenu.Items.Count]));
+    MemoLog.Lines.Add(Format('TreeView populado. %d nós raiz.', [tvMenu.Items.Count]));
   end;
-
-  // Habilitar botões se houver itens, mesmo que apenas módulos.
-  // A lógica de permissão para módulos ainda é relevante (Acesso).
   btnLimparTodas.Enabled := (tvMenu.Items.Count > 0);
   btnSelecionarTodas.Enabled := (tvMenu.Items.Count > 0);
 end;
-
 
 procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
 var
@@ -353,7 +419,7 @@ var
   PermItem: TUserPermissionItem;
   TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
   PermString: string;
-  FoundInList: Boolean; // Renomeado para clareza
+  FoundInList: Boolean;
 begin
   if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
   NodeData := PItemMenuData(ANode.Data);
@@ -379,10 +445,18 @@ begin
                 BoolToStrDB(PodeAlterar) + '|' + BoolToStrDB(PodeExcluir) + '|' +
                 BoolToStrDB(PodeImprimir);
 
-  // A lógica anterior de buscar e deletar de FPermissoesEditadas foi removida daqui
-  // pois FPermissoesEditadas é limpa antes desta função ser chamada pela primeira vez
-  // e esta função agora APENAS ADICIONA o estado inicial.
-  FPermissoesEditadas.Add(PermString);
+  FoundInList := False;
+  for i := 0 to FPermissoesEditadas.Count - 1 do
+  begin
+    if Pos(NodeData^.Tipo + '|' + IntToStr(NodeData^.ID) + '|', FPermissoesEditadas[i]) = 1 then
+    begin
+      FPermissoesEditadas[i] := PermString;
+      FoundInList := True;
+      Break;
+    end;
+  end;
+  if not FoundInList then
+    FPermissoesEditadas.Add(PermString);
 
   if ANode = tvMenu.Selected then
   begin
@@ -425,7 +499,7 @@ begin
   Screen.Cursor := crHourGlass;
   FPermissoesEditadas.Clear;
   try
-    PopularTreeView; // Agora carrega apenas Módulos para teste
+    PopularTreeView;
 
     if not FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, UserPermissions) then
     begin
@@ -553,14 +627,14 @@ var idx: Integer; tmpPermInfo: TStringList; foundInList: Boolean; tmpLinha: stri
 begin
   if not Assigned(ANodeData) then Exit; foundInList := False; tmpPermInfo := TStringList.Create;
   try
-    ValAcesso := chkAcesso.Checked; // Usa o estado ATUAL do checkbox de acesso
+    ValAcesso := ACheckedState;
 
     if ANodeData^.Tipo = 'R' then
     begin
-      ValInserir  := chkAcesso.Checked and chkInserir.Checked;
-      ValAlterar  := chkAcesso.Checked and chkAlterar.Checked;
-      ValExcluir  := chkAcesso.Checked and chkExcluir.Checked;
-      ValImprimir := chkAcesso.Checked and chkImprimir.Checked;
+      ValInserir  := ValAcesso and chkInserir.Checked;
+      ValAlterar  := ValAcesso and chkAlterar.Checked;
+      ValExcluir  := ValAcesso and chkExcluir.Checked;
+      ValImprimir := ValAcesso and chkImprimir.Checked;
     end else
     begin
       ValInserir := False; ValAlterar := False; ValExcluir := False; ValImprimir := False;
