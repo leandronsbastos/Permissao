@@ -57,6 +57,11 @@ type
     FPermissoesModificadas: Boolean;
     FPermissoesEditadas: TStringList;
 
+    // Estas listas não são mais necessárias para a carga principal, mas mantidas para não quebrar chamadas de SimularCarga...
+    FEmpresasData: TStringList;
+    FUsuariosData: TStringList;
+    FMenuEstruturaSimulada: TStringList;
+
     procedure CarregarEmpresas;
     procedure CarregarUsuarios(AIDEmpresa: Integer);
     procedure LimparPermissoesVisuais;
@@ -112,6 +117,11 @@ begin
   FPermissoesModificadas := False;
   FPermissoesEditadas := TStringList.Create;
 
+  FEmpresasData := TStringList.Create;
+  FUsuariosData := TStringList.Create;
+  FMenuEstruturaSimulada := TStringList.Create;
+
+
   tvMenu.ReadOnly := False;
   gbPermissoesItem.Enabled := False;
   btnSalvarPermissoes.Enabled := False;
@@ -139,6 +149,9 @@ begin
   end;
   FreeAndNil(FPermissaoController);
   FreeAndNil(FPermissoesEditadas);
+  FreeAndNil(FEmpresasData);
+  FreeAndNil(FUsuariosData);
+  FreeAndNil(FMenuEstruturaSimulada);
 end;
 
 procedure TfrmGerenciarPermissoes.FormShow(Sender: TObject);
@@ -151,8 +164,6 @@ begin
     else if cbEmpresa.ItemIndex = 0 then
        cbEmpresaChange(cbEmpresa);
   end;
-  // Removido 'else begin btnCarregarPermissoes.Enabled := False; end;'
-  // pois CarregarEmpresas e cbEmpresaChange já tratam isso
 end;
 
 procedure TfrmGerenciarPermissoes.LimparPermissoesVisuais;
@@ -205,7 +216,7 @@ begin
 
   if cbEmpresa.Items.Count > 0 then
   begin
-    if cbEmpresa.ItemIndex <> 0 then // Evita chamar OnChange desnecessariamente se já é 0
+    if cbEmpresa.ItemIndex <> 0 then
       cbEmpresa.ItemIndex := 0
     else
       cbEmpresaChange(cbEmpresa);
@@ -254,10 +265,10 @@ begin
 
   if cbUsuario.Items.Count > 0 then
   begin
-    if cbUsuario.ItemIndex <> 0 then // Evita OnChange se já for 0
+    if cbUsuario.ItemIndex <> 0 then
       cbUsuario.ItemIndex := 0
     else
-      btnCarregarPermissoesClick(nil); // Chama diretamente se já era 0
+      btnCarregarPermissoesClick(nil);
 
     btnCarregarPermissoes.Enabled := True;
   end
@@ -400,23 +411,33 @@ begin
   btnSelecionarTodas.Enabled := (tvMenu.Items.Count > 0);
 end;
 
-
+// VERSÃO OTIMIZADA de AplicarPermissoesVisuaisParaNo
 procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
-var i: Integer; NodeData: PItemMenuData; PermItem: TUserPermissionItem;
-    TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
-    PermString: string; FoundInList: Boolean;
+var
+  i: Integer;
+  NodeData: PItemMenuData;
+  PermItem: TUserPermissionItem;
+  TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
+  PermString: string;
+  FoundPermissionForNode: Boolean;
 begin
   if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
   NodeData := PItemMenuData(ANode.Data);
-  TemAcesso := False; PodeInserir := False; PodeAlterar := False; PodeExcluir := False; PodeImprimir := False;
+
+  TemAcesso := False; PodeInserir := False; PodeAlterar := False;
+  PodeExcluir := False; PodeImprimir := False;
+  FoundPermissionForNode := False;
 
   for PermItem in AUserPermissions do
   begin
     if (PermItem.ItemID = NodeData^.ID) and (PermItem.ItemTipo = NodeData^.Tipo) then
     begin
-      TemAcesso    := PermItem.Acesso; PodeInserir  := PermItem.Inserir;
-      PodeAlterar  := PermItem.Alterar; PodeExcluir  := PermItem.Excluir;
+      TemAcesso    := PermItem.Acesso;
+      PodeInserir  := PermItem.Inserir;
+      PodeAlterar  := PermItem.Alterar;
+      PodeExcluir  := PermItem.Excluir;
       PodeImprimir := PermItem.Imprimir;
+      FoundPermissionForNode := True;
       Break;
     end;
   end;
@@ -425,19 +446,7 @@ begin
                 BoolToStrDB(TemAcesso) + '|' + BoolToStrDB(PodeInserir) + '|' +
                 BoolToStrDB(PodeAlterar) + '|' + BoolToStrDB(PodeExcluir) + '|' +
                 BoolToStrDB(PodeImprimir);
-
-  FoundInList := False;
-  for i := 0 to FPermissoesEditadas.Count - 1 do
-  begin
-    if Pos(NodeData^.Tipo + '|' + IntToStr(NodeData^.ID) + '|', FPermissoesEditadas[i]) = 1 then
-    begin
-      FPermissoesEditadas[i] := PermString;
-      FoundInList := True;
-      Break;
-    end;
-  end;
-  if not FoundInList then
-    FPermissoesEditadas.Add(PermString);
+  FPermissoesEditadas.Add(PermString); // Adiciona estado inicial, FPermissoesEditadas foi limpa antes
 
   if ANode = tvMenu.Selected then
   begin
@@ -494,7 +503,7 @@ begin
     if tvMenu.Items.Count > 0 then
     begin
        for i := 0 to tvMenu.Items.Count -1 do
-          AplicarPermissoesVisuaisParaNo(tvMenu.Items[i], UserPermissions);
+          AplicarPermissoesVisuaisParaNo(tvMenu.Items[i], UserPermissions); // Chama a versão otimizada
 
        if Assigned(tvMenu.Selected) then
          AtualizarChecksPermissaoParaNo(tvMenu.Selected, UserPermissions)
@@ -608,47 +617,27 @@ var idx: Integer; tmpPermInfo: TStringList; foundInList: Boolean; tmpLinha: stri
 begin
   if not Assigned(ANodeData) then Exit; foundInList := False; tmpPermInfo := TStringList.Create;
   try
-    // Determina os valores booleanos com base nos checkboxes atuais
-    ValAcesso := chkAcesso.Checked;
+    ValAcesso := ACheckedState; // O Acesso é o principal driver aqui
+
     if ANodeData^.Tipo = 'R' then
     begin
-      ValInserir := chkInserir.Checked;
-      ValAlterar := chkAlterar.Checked;
-      ValExcluir := chkExcluir.Checked;
-      ValImprimir := chkImprimir.Checked;
+      // Se o Acesso estiver sendo marcado (ACheckedState = True), usamos o estado atual dos checkboxes granulares.
+      // Se o Acesso estiver sendo desmarcado (ACheckedState = False), todas as permissões granulares também são False.
+      ValInserir  := ValAcesso and chkInserir.Checked;
+      ValAlterar  := ValAcesso and chkAlterar.Checked;
+      ValExcluir  := ValAcesso and chkExcluir.Checked;
+      ValImprimir := ValAcesso and chkImprimir.Checked;
     end else
     begin
       ValInserir := False; ValAlterar := False; ValExcluir := False; ValImprimir := False;
     end;
-
-    // Se o Acesso (ACheckedState) for o gatilho principal, e ele for desmarcado,
-    // todas as permissões granulares para este item também devem ser desmarcadas.
-    if not ACheckedState then
-    begin
-      ValInserir := False; ValAlterar := False; ValExcluir := False; ValImprimir := False;
-    end;
-
-    // Se o checkbox que disparou o evento é um dos granulares, e Acesso está marcado,
-    // usamos o valor do checkbox que disparou. Se Acesso não está marcado, todos são False.
-    // ACheckedState aqui representa o novo estado de chkAcesso se chkAcesso foi clicado,
-    // ou o estado atual de chkAcesso se outro checkbox foi clicado.
-    // A lógica mais simples é sempre ler todos os checkboxes se Acesso está True e é Rotina.
-
-    if ANodeData^.Tipo = 'R' then
-    begin
-        ValInserir  := chkAcesso.Checked and chkInserir.Checked;
-        ValAlterar  := chkAcesso.Checked and chkAlterar.Checked;
-        ValExcluir  := chkAcesso.Checked and chkExcluir.Checked;
-        ValImprimir := chkAcesso.Checked and chkImprimir.Checked;
-    end;
-
 
     for idx := 0 to FPermissoesEditadas.Count - 1 do
     begin
       tmpPermInfo.Delimiter := '|'; tmpPermInfo.DelimitedText := FPermissoesEditadas[idx];
       if (tmpPermInfo.Count = 7) and (tmpPermInfo[0][1] = ANodeData^.Tipo) and (StrToInt(tmpPermInfo[1]) = ANodeData^.ID) then
       begin
-        tmpPermInfo[2] := BoolToStrDB(chkAcesso.Checked); // Sempre usa o estado atual de chkAcesso
+        tmpPermInfo[2] := BoolToStrDB(ValAcesso);
         tmpPermInfo[3] := BoolToStrDB(ValInserir);
         tmpPermInfo[4] := BoolToStrDB(ValAlterar);
         tmpPermInfo[5] := BoolToStrDB(ValExcluir);
@@ -660,7 +649,7 @@ begin
     if not foundInList then
     begin
       tmpLinha := ANodeData^.Tipo + '|' + IntToStr(ANodeData^.ID) + '|' +
-                  BoolToStrDB(chkAcesso.Checked) + '|' +
+                  BoolToStrDB(ValAcesso) + '|' +
                   BoolToStrDB(ValInserir) + '|' +
                   BoolToStrDB(ValAlterar) + '|' +
                   BoolToStrDB(ValExcluir) + '|' +
@@ -680,6 +669,7 @@ begin
   FPermissoesModificadas := True;
   btnSalvarPermissoes.Enabled := True;
 
+  // ACheckedState é o novo estado do chkAcesso, mas a função lerá todos os checkboxes
   MarcarNoAtualizarListaEditada(NodeData, chkAcesso.Checked);
 end;
 
@@ -799,11 +789,16 @@ procedure TfrmGerenciarPermissoes.ProcessarNoParaLimpezaTotal(ANode: TTreeNode);
 var j: Integer; NodeData: PItemMenuData;
 begin
   if not Assigned(ANode) then Exit; NodeData := GetItemMenuData(ANode);
-  MarcarNoAtualizarListaEditada(NodeData, False);
+  // Força todos os checkboxes para False antes de atualizar a lista
   if ANode = tvMenu.Selected then
   begin
       chkAcesso.Checked := False; chkInserir.Checked := False; chkAlterar.Checked := False;
       chkExcluir.Checked := False; chkImprimir.Checked := False;
+  end;
+  MarcarNoAtualizarListaEditada(NodeData, False);
+
+  if ANode = tvMenu.Selected then // Re-aplica o estado visual desabilitado se for rotina
+  begin
       if NodeData^.Tipo <> 'R' then
       begin
           chkInserir.Enabled  := False; chkAlterar.Enabled  := False;
@@ -818,16 +813,24 @@ procedure TfrmGerenciarPermissoes.ProcessarNoParaSelecaoTotal(ANode: TTreeNode);
 var j: Integer; NodeData: PItemMenuData;
 begin
   if not Assigned(ANode) then Exit; NodeData := GetItemMenuData(ANode);
-  MarcarNoAtualizarListaEditada(NodeData, True);
+  // Força todos os checkboxes para True antes de atualizar a lista
   if ANode = tvMenu.Selected then
   begin
       chkAcesso.Checked := True;
       if NodeData^.Tipo = 'R' then
       begin
-          chkInserir.Enabled  := True; chkInserir.Checked  := True;
-          chkAlterar.Enabled  := True; chkAlterar.Checked  := True;
-          chkExcluir.Enabled  := True; chkExcluir.Checked  := True;
-          chkImprimir.Enabled := True; chkImprimir.Checked := True;
+          chkInserir.Checked  := True; chkAlterar.Checked  := True;
+          chkExcluir.Checked  := True; chkImprimir.Checked := True;
+      end;
+  end;
+  MarcarNoAtualizarListaEditada(NodeData, True);
+
+  if ANode = tvMenu.Selected then // Re-aplica o estado visual habilitado se for rotina
+  begin
+      if NodeData^.Tipo = 'R' then
+      begin
+          chkInserir.Enabled  := True; chkAlterar.Enabled  := True;
+          chkExcluir.Enabled  := True; chkImprimir.Enabled := True;
       end;
   end;
   for j := 0 to ANode.Count - 1 do ProcessarNoParaSelecaoTotal(ANode.Item[j]);
