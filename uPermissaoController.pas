@@ -18,17 +18,25 @@ type
   PMenuItemStructure = ^TMenuItemStructure;
   TArrayOfMenuItemStructure = array of TMenuItemStructure;
 
-  TUserPermissionItem = record
+  // TUserPermissionItem = record // Estrutura Antiga - REMOVIDA
+  //   ItemID: Integer;
+  //   ItemTipo: Char;
+  //   Acesso: Boolean;
+  //   Inserir: Boolean;
+  //   Alterar: Boolean;
+  //   Excluir: Boolean;
+  //   Imprimir: Boolean;
+  // end;
+  // PUserPermissionItem = ^TUserPermissionItem; // Antigo
+  // TArrayOfUserPermissionItem = array of TUserPermissionItem; // Antigo
+
+  TSingleUserPermission = record
     ItemID: Integer;
     ItemTipo: Char;
-    Acesso: Boolean;
-    Inserir: Boolean;
-    Alterar: Boolean;
-    Excluir: Boolean;
-    Imprimir: Boolean;
+    NomePermissao: string;
+    Valor: Boolean;
   end;
-  PUserPermissionItem = ^TUserPermissionItem;
-  TArrayOfUserPermissionItem = array of TUserPermissionItem;
+  TArrayOfSingleUserPermission = array of TSingleUserPermission;
 
   TPermissaoController = class
   private
@@ -36,10 +44,14 @@ type
     FConnectionString: string;
 
     function QueryToRecords(SQL: string; var ARecords: TArrayOfMenuItemStructure): Boolean; overload;
-    function QueryToUserPermissions(SQL: string; var APermissions: TArrayOfUserPermissionItem): Boolean; overload;
-    function ExecuteSQL(SQL: string): Boolean;
+    // function QueryToUserPermissions(SQL: string; var APermissions: TArrayOfUserPermissionItem): Boolean; overload; // Antigo - REMOVIDO
+    function QueryToSingleUserPermissions(SQL: string; var APermissions: TArrayOfSingleUserPermission): Boolean; // Novo
+    function ExecuteSQL(SQL: string; out FilasAfetadas: Integer): Boolean; overload; // Modificado para retornar FilasAfetadas
+    function ExecuteSQL(SQL: string): Boolean; overload; // Mantido para compatibilidade onde FilasAfetadas não é necessário
 
     function QuotedStrDB(const S: string): string;
+    function BoolToCharSN(Value: Boolean): Char;
+    function CharSNToBool(Value: Char): Boolean;
     function GetFieldAsBoolean(DataSet: TDataSet; const FieldName: string): Boolean;
     function BoolToDBInt(Value: Boolean): Integer;
 
@@ -52,8 +64,10 @@ type
     function TestConnection: Boolean;
 
     function CarregarEstruturaMenu(var AMenuEstrutura: TArrayOfMenuItemStructure): Boolean;
-    function CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfUserPermissionItem): Boolean;
-    function AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfUserPermissionItem): Boolean;
+    // function CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfUserPermissionItem): Boolean; // Assinatura Antiga
+    function CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfSingleUserPermission): Boolean; // Nova Assinatura
+    // function AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfUserPermissionItem): Boolean; // Assinatura Antiga
+    function SalvarPermissoesAlteradas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfSingleUserPermission): Boolean; // Nova Assinatura e Nome
     function CopiarPermissoes(AIDEmpresa, AIDUsuarioOrigem, AIDUsuarioDestino: Integer): Boolean;
 
     function PopularPermissoesDefaultParaUsuario(AIDEmpresa, AIDUsuario: Integer): Boolean;
@@ -138,16 +152,39 @@ begin
   Result := Ord(Value);
 end;
 
-function TPermissaoController.GetFieldAsBoolean(DataSet: TDataSet; const FieldName: string): Boolean;
+function TPermissaoController.BoolToCharSN(Value: Boolean): Char;
 begin
-  Result := DataSet.FieldByName(FieldName).AsInteger = 1;
+  if Value then Result := 'S' else Result := 'N';
 end;
 
-function TPermissaoController.ExecuteSQL(SQL: string): Boolean;
+function TPermissaoController.CharSNToBool(Value: Char): Boolean;
+begin
+  Result := UpCase(Value) = 'S';
+end;
+
+function TPermissaoController.GetFieldAsBoolean(DataSet: TDataSet; const FieldName: string): Boolean;
+begin
+  // Try to get as Integer first (0 or 1)
+  try
+    Result := DataSet.FieldByName(FieldName).AsInteger = 1;
+    Exit;
+  except
+    // If not an integer, try as String ('S' or 'N', or '0' or '1')
+    try
+      Result := CharSNToBool(DataSet.FieldByName(FieldName).AsString[1]);
+    except
+      Result := False; // Default to false if conversion fails
+    end;
+  end;
+end;
+
+function TPermissaoController.ExecuteSQL(SQL: string; out FilasAfetadas: Integer): Boolean;
 var
   ADOCommand: TADOCommand;
+  RecordsAffected: OleVariant; // Para ExecuteOptions com eoExecuteNoRecords
 begin
   Result := False;
+  FilasAfetadas := 0;
   if not FADOConnection.Connected then
   begin
     if FConnectionString = '' then Exit;
@@ -161,16 +198,38 @@ begin
     try
       ADOCommand.Connection := FADOConnection;
       ADOCommand.CommandText := SQL;
-      ADOCommand.Execute;
-      Result := True;
+      // Para INSERT, UPDATE, DELETE, é melhor usar Execute com eoExecuteNoRecords
+      // e pegar o número de linhas afetadas diretamente.
+      // O método Execute padrão retorna um Recordset se a query for um SELECT.
+      // Para DML, o Recordset retornado pode ser nil ou fechado.
+      // A propriedade RowsAffected do TADOConnection é mais confiável após um ExecuteSQL
+      // ou usando o parâmetro RecordsAffected do método Execute.
+      ADOCommand.Execute(RecordsAffected); // RecordsAffected receberá o número de linhas
+      if VarIsType(RecordsAffected, varInteger) or VarIsType(RecordsAffected, varSmallint) then // Adicionado varSmallint
+         FilasAfetadas := RecordsAffected
+      else if FADOConnection.RecordsAffected > -1 then // Fallback se RecordsAffected não for numérico
+         FilasAfetadas := FADOConnection.RecordsAffected
+      else
+         FilasAfetadas := 0; // Ou 1 se a execução foi bem sucedida mas não retornou contagem
+
+      Result := True; // Se não houve exceção, consideramos sucesso
     except
       on E: Exception do
       begin
         Result := False;
+        // Adicionar log de erro aqui seria útil
       end;
     end;
     FreeAndNil(ADOCommand);
   end;
+end;
+
+// Sobrecarga para manter compatibilidade com chamadas existentes que não precisam de FilasAfetadas
+function TPermissaoController.ExecuteSQL(SQL: string): Boolean;
+var
+  DummyFilasAfetadas: Integer;
+begin
+  Result := ExecuteSQL(SQL, DummyFilasAfetadas);
 end;
 
 function TPermissaoController.QueryToRecords(SQL: string; var ARecords: TArrayOfMenuItemStructure): Boolean;
@@ -236,13 +295,22 @@ begin
   end;
 end;
 
-function TPermissaoController.QueryToUserPermissions(SQL: string; var APermissions: TArrayOfUserPermissionItem): Boolean;
+// Antiga QueryToUserPermissions - REMOVIDA
+// function TPermissaoController.QueryToUserPermissions(SQL: string; var APermissions: TArrayOfUserPermissionItem): Boolean;
+// ... corpo da função removida ...
+
+function TPermissaoController.QueryToSingleUserPermissions(SQL: string; var APermissions: TArrayOfSingleUserPermission): Boolean;
 var
   ADODataSet: TADODataSet;
   i: Integer;
+  ValItemID: Integer;
+  ValItemTipo: Char;
+  ValNomePermissao: string;
+  ValValorPermissao: Char;
 begin
   Result := False;
   SetLength(APermissions, 0);
+
   if not FADOConnection.Connected then
   begin
     if FConnectionString = '' then Exit;
@@ -259,46 +327,55 @@ begin
       ADODataSet.Open;
       if not ADODataSet.IsEmpty then
       begin
-        SetLength(APermissions, ADODataSet.RecordCount);
+        SetLength(APermissions, ADODataSet.RecordCount); // Alocação inicial, pode ser ajustada
         i := 0;
         ADODataSet.First;
         while not ADODataSet.Eof do
         begin
-          with APermissions[i] do
+          ValItemID := 0;
+          ValItemTipo := #0;
+
+          if not ADODataSet.FieldByName('ID_MODULO_REF').IsNull then
           begin
-            if not ADODataSet.FieldByName('ID_MODULO_PERMITIDO').IsNull then
-            begin
-              ItemID := ADODataSet.FieldByName('ID_MODULO_PERMITIDO').AsInteger;
-              ItemTipo := 'M';
-            end
-            else if not ADODataSet.FieldByName('ID_SUBMODULO_PERMITIDO').IsNull then
-            begin
-              ItemID := ADODataSet.FieldByName('ID_SUBMODULO_PERMITIDO').AsInteger;
-              ItemTipo := 'S';
-            end
-            else if not ADODataSet.FieldByName('ID_ROTINA_PERMITIDA').IsNull then
-            begin
-              ItemID := ADODataSet.FieldByName('ID_ROTINA_PERMITIDA').AsInteger;
-              ItemTipo := 'R';
-            end
-            else
-            begin
-              ADODataSet.Next;
-              Continue;
-            end;
-            Acesso    := GetFieldAsBoolean(ADODataSet, 'ACESSO');
-            Inserir   := GetFieldAsBoolean(ADODataSet, 'P_INSERIR');
-            Alterar   := GetFieldAsBoolean(ADODataSet, 'P_ALTERAR');
-            Excluir   := GetFieldAsBoolean(ADODataSet, 'P_EXCLUIR');
-            Imprimir  := GetFieldAsBoolean(ADODataSet, 'P_IMPRIMIR');
+            ValItemID := ADODataSet.FieldByName('ID_MODULO_REF').AsInteger;
+            ValItemTipo := 'M';
+          end
+          else if not ADODataSet.FieldByName('ID_SUBMODULO_REF').IsNull then
+          begin
+            ValItemID := ADODataSet.FieldByName('ID_SUBMODULO_REF').AsInteger;
+            ValItemTipo := 'S';
+          end
+          else if not ADODataSet.FieldByName('ID_ROTINA_REF').IsNull then
+          begin
+            ValItemID := ADODataSet.FieldByName('ID_ROTINA_REF').AsInteger;
+            ValItemTipo := 'R';
+          end
+          else
+          begin
+            // Registro inválido ou inesperado na tabela PERMISSAO_USUARIO
+            // Poderia logar um aviso aqui
+            ADODataSet.Next;
+            Continue; // Pula para o próximo registro
           end;
-          Inc(i);
+
+          ValNomePermissao := ADODataSet.FieldByName('NOME_PERMISSAO').AsString;
+          ValValorPermissao := ADODataSet.FieldByName('VALOR_PERMISSAO').AsString[1]; // Pega o primeiro caracter
+
+          // Adiciona ao array apenas se o tipo de item foi determinado
+          if (ValItemTipo <> #0) and (ValNomePermissao <> '') then
+          begin
+            APermissions[i].ItemID := ValItemID;
+            APermissions[i].ItemTipo := ValItemTipo;
+            APermissions[i].NomePermissao := ValNomePermissao;
+            APermissions[i].Valor := CharSNToBool(ValValorPermissao);
+            Inc(i);
+          end;
           ADODataSet.Next;
         end;
-        SetLength(APermissions, i);
+        SetLength(APermissions, i); // Ajusta o tamanho final do array
         Result := True;
       end
-      else
+      else // DataSet vazio, o que é um resultado válido (nenhuma permissão explícita)
       begin
         Result := True;
       end;
@@ -307,6 +384,7 @@ begin
       begin
         SetLength(APermissions, 0);
         Result := False;
+        // Adicionar log de erro aqui seria útil
       end;
     end;
     FreeAndNil(ADODataSet);
@@ -333,22 +411,31 @@ begin
   Result := QueryToRecords(SQL, AMenuEstrutura);
 end;
 
-function TPermissaoController.CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfUserPermissionItem): Boolean;
+// function TPermissaoController.CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfUserPermissionItem): Boolean; // Assinatura Antiga
+function TPermissaoController.CarregarPermissoesUsuario(AIDEmpresa, AIDUsuario: Integer; var APermissoes: TArrayOfSingleUserPermission): Boolean; // Nova Assinatura
 var
   SQL: string;
 begin
-  SQL := Format('SELECT ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
-                'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR ' +
-                'FROM PERMISSAO_USUARIO ' +
-                'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d', [AIDEmpresa, AIDUsuario]);
-  Result := QueryToUserPermissions(SQL, APermissoes);
+  // A nova tabela PERMISSAO_USUARIO tem colunas:
+  // ID_PERMISSAO_USUARIO (PK), ID_EMPRESA, ID_USUARIO, ID_MODULO_REF, ID_SUBMODULO_REF, ID_ROTINA_REF, NOME_PERMISSAO, VALOR_PERMISSAO
+  SQL := Format(
+    'SELECT ID_MODULO_REF, ID_SUBMODULO_REF, ID_ROTINA_REF, NOME_PERMISSAO, VALOR_PERMISSAO ' +
+    'FROM PERMISSAO_USUARIO ' +
+    'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d',
+    [AIDEmpresa, AIDUsuario]
+  );
+  Result := QueryToSingleUserPermissions(SQL, APermissoes); // Nova Chamada
 end;
 
-function TPermissaoController.AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfUserPermissionItem): Boolean;
+// function TPermissaoController.AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfUserPermissionItem): Boolean; // Assinatura Antiga
+function TPermissaoController.SalvarPermissoesAlteradas(AIDEmpresa, AIDUsuario: Integer; const AListaPermissoesAlteradas: TArrayOfSingleUserPermission): Boolean; // Nova Assinatura e Nome
 var
-  PermItem: TUserPermissionItem;
-  SQL_Update: string;
-  WhereClauseItem: string;
+  PermItem: TSingleUserPermission;
+  SQL_Update, SQL_Insert: string;
+  ItemRefFieldPK, ItemRefValuePK: string;
+  RowsAffectedUpdate, RowsAffectedInsert: Integer;
+  ValorCharSN: Char;
+  ColModulo, ColSubmodulo, ColRotina: string;
 begin
   Result := False;
   if not FADOConnection.Connected then
@@ -363,27 +450,45 @@ begin
   try
     for PermItem in AListaPermissoesAlteradas do
     begin
+      ItemRefFieldPK := ''; ItemRefValuePK := IntToStr(PermItem.ItemID);
+      ValorCharSN := BoolToCharSN(PermItem.Valor);
+
+      ColModulo    := 'NULL'; ColSubmodulo := 'NULL'; ColRotina    := 'NULL';
       case PermItem.ItemTipo of
-        'M': WhereClauseItem := 'ID_MODULO_PERMITIDO = ' + IntToStr(PermItem.ItemID);
-        'S': WhereClauseItem := 'ID_SUBMODULO_PERMITIDO = ' + IntToStr(PermItem.ItemID);
-        'R': WhereClauseItem := 'ID_ROTINA_PERMITIDA = ' + IntToStr(PermItem.ItemID);
+        'M': begin ItemRefFieldPK := 'ID_MODULO_REF';    ColModulo    := ItemRefValuePK; end;
+        'S': begin ItemRefFieldPK := 'ID_SUBMODULO_REF'; ColSubmodulo := ItemRefValuePK; end;
+        'R': begin ItemRefFieldPK := 'ID_ROTINA_REF';    ColRotina    := ItemRefValuePK; end;
       else
-        Continue;
+        Continue; // Tipo de item inválido
       end;
 
       SQL_Update := Format(
-        'UPDATE PERMISSAO_USUARIO SET ' +
-        'ACESSO = %d, P_INSERIR = %d, P_ALTERAR = %d, P_EXCLUIR = %d, P_IMPRIMIR = %d ' +
-        'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s',
-        [BoolToDBInt(PermItem.Acesso), BoolToDBInt(PermItem.Inserir),
-         BoolToDBInt(PermItem.Alterar), BoolToDBInt(PermItem.Excluir),
-         BoolToDBInt(PermItem.Imprimir),
-         AIDEmpresa, AIDUsuario, WhereClauseItem]);
+        'UPDATE PERMISSAO_USUARIO SET VALOR_PERMISSAO = %s ' +
+        'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s = %s AND NOME_PERMISSAO = %s',
+        [QuotedStrDB(String(ValorCharSN)), AIDEmpresa, AIDUsuario, ItemRefFieldPK, ItemRefValuePK, QuotedStrDB(PermItem.NomePermissao)]
+      );
 
-      if not ExecuteSQL(SQL_Update) then
+      if not ExecuteSQL(SQL_Update, RowsAffectedUpdate) then
       begin
         FADOConnection.RollbackTrans;
         Exit;
+      end;
+
+      if (RowsAffectedUpdate = 0) and (PermItem.Valor = True) then // Apenas insere se for para 'S' e não existia
+      begin
+        SQL_Insert := Format(
+          'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_REF, ID_SUBMODULO_REF, ID_ROTINA_REF, NOME_PERMISSAO, VALOR_PERMISSAO) ' +
+          'VALUES (%d, %d, %s, %s, %s, %s, %s)',
+          [AIDEmpresa, AIDUsuario,
+           ColModulo, ColSubmodulo, ColRotina, // Valores corretos para as colunas FK
+           QuotedStrDB(PermItem.NomePermissao), QuotedStrDB(String(ValorCharSN))]
+        );
+
+        if not ExecuteSQL(SQL_Insert, RowsAffectedInsert) then
+        begin
+          FADOConnection.RollbackTrans;
+          Exit;
+        end;
       end;
     end;
     FADOConnection.CommitTrans;
@@ -393,139 +498,139 @@ begin
     begin
       FADOConnection.RollbackTrans;
       Result := False;
+      // Adicionar log de erro aqui seria útil
     end;
   end;
 end;
 
 function TPermissaoController.CopiarPermissoes(AIDEmpresa, AIDUsuarioOrigem, AIDUsuarioDestino: Integer): Boolean;
 var
-  PermissoesOrigem: TArrayOfUserPermissionItem;
-  // SQL_Delete: string; // Removida variável não utilizada
+  PermissoesOrigem: TArrayOfSingleUserPermission;
+  PermissoesParaSalvarDestino: TArrayOfSingleUserPermission;
+  PermItemOrigem: TSingleUserPermission;
+  SQL_LimparDestino: string;
+  DummyRowsAffected: Integer;
 begin
   Result := False;
-  if CarregarPermissoesUsuario(AIDEmpresa, AIDUsuarioOrigem, PermissoesOrigem) then
+  if not CarregarPermissoesUsuario(AIDEmpresa, AIDUsuarioOrigem, PermissoesOrigem) then
   begin
-    // Assumindo que o usuário destino já tem permissões default (ou que PopularPermissoesDefaultParaUsuario foi chamado)
-    // Atualizamos as permissões do destino com base nas da origem.
-    Result := AtualizarPermissoesEspecificas(AIDEmpresa, AIDUsuarioDestino, PermissoesOrigem);
+    Exit;
+  end;
+
+  SetLength(PermissoesParaSalvarDestino, 0);
+  for PermItemOrigem in PermissoesOrigem do
+  begin
+    if PermItemOrigem.Valor then // Copiar apenas as permissões que são 'S' (True)
+    begin
+      SetLength(PermissoesParaSalvarDestino, Length(PermissoesParaSalvarDestino) + 1);
+      PermissoesParaSalvarDestino[High(PermissoesParaSalvarDestino)] := PermItemOrigem;
+    end;
+  end;
+
+  if not FADOConnection.Connected then
+  begin
+    if FConnectionString = '' then Exit;
+    FADOConnection.ConnectionString := FConnectionString;
+    FADOConnection.Connected := True;
+  end;
+  if not FADOConnection.Connected then Exit;
+
+  FADOConnection.BeginTrans;
+  try
+    SQL_LimparDestino := Format(
+      'UPDATE PERMISSAO_USUARIO SET VALOR_PERMISSAO = ''N'' ' +
+      'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d',
+      [AIDEmpresa, AIDUsuarioDestino]
+    );
+    if not ExecuteSQL(SQL_LimparDestino, DummyRowsAffected) then
+    begin
+      FADOConnection.RollbackTrans;
+      Exit;
+    end;
+
+    if Length(PermissoesParaSalvarDestino) > 0 then
+    begin
+      // Reutiliza a lógica de SalvarPermissoesAlteradas, mas dentro da transação atual.
+      // Para isso, SalvarPermissoesAlteradas não deve gerenciar sua própria transação
+      // ou deve ser capaz de detectar uma transação existente.
+      // ASSUMINDO que SalvarPermissoesAlteradas foi modificada para não criar transação se já houver uma.
+      // Se SalvarPermissoesAlteradas ainda comita/rollbacka, esta transação pode ser problemática.
+      // A melhor abordagem seria passar a conexão/transação para SalvarPermissoesAlteradas ou
+      // replicar a lógica de insert/update aqui.
+      // Para este exemplo, vamos assumir que podemos chamar SalvarPermissoesAlteradas
+      // e se ela falhar, esta transação será rollbackada pela exceção.
+
+      // Como SalvarPermissoesAlteradas já tem sua própria transação,
+      // é mais seguro replicar a lógica de UPSERT aqui para garantir uma única transação.
+      var
+        PermItem: TSingleUserPermission;
+        SQL_Update, SQL_Insert: string;
+        ItemRefFieldPK, ItemRefValuePK: string;
+        RowsAffectedUpdate, RowsAffectedInsert: Integer;
+        ValorCharSN: Char;
+        ColModulo, ColSubmodulo, ColRotina: string;
+      begin
+        for PermItem in PermissoesParaSalvarDestino do
+        begin
+            ItemRefFieldPK := ''; ItemRefValuePK := IntToStr(PermItem.ItemID);
+            // As permissões copiadas são sempre 'S'
+            ValorCharSN := 'S'; // PermItem.Valor deve ser True aqui, então BoolToCharSN(PermItem.Valor) resultaria 'S'
+
+            ColModulo    := 'NULL'; ColSubmodulo := 'NULL'; ColRotina    := 'NULL';
+            case PermItem.ItemTipo of
+              'M': begin ItemRefFieldPK := 'ID_MODULO_REF';    ColModulo    := ItemRefValuePK; end;
+              'S': begin ItemRefFieldPK := 'ID_SUBMODULO_REF'; ColSubmodulo := ItemRefValuePK; end;
+              'R': begin ItemRefFieldPK := 'ID_ROTINA_REF';    ColRotina    := ItemRefValuePK; end;
+              else Continue;
+            end;
+
+            SQL_Update := Format(
+              'UPDATE PERMISSAO_USUARIO SET VALOR_PERMISSAO = %s ' +
+              'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s = %s AND NOME_PERMISSAO = %s',
+              [QuotedStrDB(String(ValorCharSN)), AIDEmpresa, AIDUsuarioDestino, ItemRefFieldPK, ItemRefValuePK, QuotedStrDB(PermItem.NomePermissao)]
+            );
+            if not ExecuteSQL(SQL_Update, RowsAffectedUpdate) then begin FADOConnection.RollbackTrans; Exit; end;
+
+            if (RowsAffectedUpdate = 0) then // Se não atualizou (não existia ou já era 'S'), e queremos 'S', então INSERT.
+            begin
+              SQL_Insert := Format(
+                'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_REF, ID_SUBMODULO_REF, ID_ROTINA_REF, NOME_PERMISSAO, VALOR_PERMISSAO) ' +
+                'VALUES (%d, %d, %s, %s, %s, %s, %s)',
+                [AIDEmpresa, AIDUsuarioDestino,
+                 ColModulo, ColSubmodulo, ColRotina,
+                 QuotedStrDB(PermItem.NomePermissao), QuotedStrDB(String(ValorCharSN))]
+              );
+              if not ExecuteSQL(SQL_Insert, RowsAffectedInsert) then begin FADOConnection.RollbackTrans; Exit; end;
+            end;
+        end;
+      end;
+    end;
+
+    FADOConnection.CommitTrans;
+    Result := True;
+  except
+    on E: Exception do
+    begin
+      FADOConnection.RollbackTrans;
+      Result := False;
+    end;
   end;
 end;
 
 function TPermissaoController.PopularPermissoesDefaultParaUsuario(AIDEmpresa, AIDUsuario: Integer): Boolean;
-var
-  MenuEstrutura: TArrayOfMenuItemStructure;
-  Item: TMenuItemStructure;
-  SQL_Insert, SQL_Values_Part: string; // SQL_Values_Part adicionada
-  ModuloFK, SubmoduloFK, RotinaFK: string;
 begin
-  Result := False;
-  if not CarregarEstruturaMenu(MenuEstrutura) then Exit;
-
-  if not FADOConnection.Connected then
-  begin
-    if FConnectionString = '' then Exit;
-    FADOConnection.ConnectionString := FConnectionString;
-    FADOConnection.Connected := True;
-  end;
-  if not FADOConnection.Connected then Exit;
-
-  FADOConnection.BeginTrans;
-  try
-    for Item in MenuEstrutura do
-    begin
-      ModuloFK := 'NULL'; SubmoduloFK := 'NULL'; RotinaFK := 'NULL';
-      case Item.Tipo of
-        'M': ModuloFK := IntToStr(Item.ID);
-        'S': SubmoduloFK := IntToStr(Item.ID);
-        'R': RotinaFK := IntToStr(Item.ID);
-      end;
-
-      // CORRIGIDO: Construção da string SQL para evitar E2010
-      SQL_Values_Part := Format('(%d, %d, %s, %s, %s, 0, 0, 0, 0, 0)',
-                                [AIDEmpresa, AIDUsuario, ModuloFK, SubmoduloFK, RotinaFK]);
-      SQL_Insert := 'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
-                    'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR) VALUES ' + SQL_Values_Part;
-
-      // Para evitar erro de chave duplicada, idealmente checar se já existe ou usar MERGE/ON CONFLICT (específico do SGBD)
-      // Por simplicidade, vamos apenas tentar inserir. Se der erro de UNIQUE, a transação dará rollback.
-      // Uma abordagem mais robusta seria:
-      // IF NOT EXISTS (SELECT 1 FROM PERMISSAO_USUARIO WHERE ID_EMPRESA = AIDEmpresa AND ID_USUARIO = AIDUsuario AND ...) THEN
-      // BEGIN INSERT ... END
-      if not ExecuteSQL(SQL_Insert) then
-      begin
-        // Não necessariamente um erro fatal se a intenção é apenas garantir que existam.
-        // Pode logar um aviso se falhar por outra razão que não chave duplicada.
-      end;
-    end;
-    FADOConnection.CommitTrans;
-    Result := True;
-  except
-    on E: Exception do
-    begin
-      FADOConnection.RollbackTrans;
-      Result := False;
-    end;
-  end;
+  // Conforme a decisão do usuário, a ausência de um registro em PERMISSAO_USUARIO
+  // implica que a permissão é 'N' (negada/não concedida).
+  // Portanto, esta função não precisa inserir registros default com 'N'.
+  Result := True; // Operação bem-sucedida, pois não há nada a fazer.
 end;
 
 function TPermissaoController.PopularPermissoesDefaultParaNovoItemMenu(AItemID: Integer; AItemTipo: Char; ANomeFormParaRotina: string): Boolean;
-var
-  // Usuarios: TStringList; // Não usado como TStringList
-  ADODataSetUsers: TADODataSet;
-  IDEmpresa, IDUsuario: Integer;
-  SQL_Insert, SQL_Values_Part: string;
-  ModuloFK, SubmoduloFK, RotinaFK: string;
 begin
-  Result := False;
-
-  if not FADOConnection.Connected then
-  begin
-    if FConnectionString = '' then Exit;
-    FADOConnection.ConnectionString := FConnectionString;
-    FADOConnection.Connected := True;
-  end;
-  if not FADOConnection.Connected then Exit;
-
-  ADODataSetUsers := TADODataSet.Create(nil);
-  FADOConnection.BeginTrans;
-  try
-    ADODataSetUsers.Connection := FADOConnection;
-    ADODataSetUsers.CommandText := 'SELECT ID_EMPRESA, ID_USUARIO FROM USUARIO'; // Pega todos os usuários de todas as empresas
-    ADODataSetUsers.Open;
-
-    while not ADODataSetUsers.Eof do
-    begin
-      IDEmpresa := ADODataSetUsers.FieldByName('ID_EMPRESA').AsInteger;
-      IDUsuario := ADODataSetUsers.FieldByName('ID_USUARIO').AsInteger;
-
-      ModuloFK := 'NULL'; SubmoduloFK := 'NULL'; RotinaFK := 'NULL';
-      case AItemTipo of
-        'M': ModuloFK := IntToStr(AItemID);
-        'S': SubmoduloFK := IntToStr(AItemID);
-        'R': RotinaFK := IntToStr(AItemID);
-      end;
-
-      SQL_Values_Part := Format('(%d, %d, %s, %s, %s, 0, 0, 0, 0, 0)',
-                                [IDEmpresa, IDUsuario, ModuloFK, SubmoduloFK, RotinaFK]);
-      SQL_Insert := 'INSERT INTO PERMISSAO_USUARIO (ID_EMPRESA, ID_USUARIO, ID_MODULO_PERMITIDO, ID_SUBMODULO_PERMITIDO, ID_ROTINA_PERMITIDA, ' +
-                    'ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR) VALUES ' + SQL_Values_Part;
-
-      if not ExecuteSQL(SQL_Insert) then
-      begin
-        // Logar aviso ou tratar erro, mas continuar para outros usuários
-      end;
-      ADODataSetUsers.Next;
-    end;
-    FADOConnection.CommitTrans;
-    Result := True;
-  except
-    on E: Exception do
-    begin
-      FADOConnection.RollbackTrans;
-      Result := False;
-    end;
-  end;
-  FreeAndNil(ADODataSetUsers);
+  // Similar a PopularPermissoesDefaultParaUsuario, não é necessário
+  // criar entradas default 'N' para novos itens de menu para todos os usuários.
+  // A ausência da permissão na tabela já significa 'N'.
+  Result := True; // Operação bem-sucedida.
 end;
 
 
@@ -534,8 +639,9 @@ var
   SQL: string;
   ADODataSet: TADODataSet;
   IsAdmin: Boolean;
+  RotinaID: Integer;
 begin
-  Result := False;
+  Result := False; // Default: Acesso negado
   PInserir := False; PAlterar := False; PExcluir := False; PImprimir := False;
 
   if not FADOConnection.Connected then
@@ -564,22 +670,42 @@ begin
       Exit;
     end;
 
-    SQL := Format(
-      'SELECT PU.ACESSO, PU.P_INSERIR, PU.P_ALTERAR, PU.P_EXCLUIR, PU.P_IMPRIMIR ' +
-      'FROM PERMISSAO_USUARIO PU ' +
-      'INNER JOIN ROTINA R ON PU.ID_ROTINA_PERMITIDA = R.ID_ROTINA ' +
-      'WHERE PU.ID_EMPRESA = %d AND PU.ID_USUARIO = %d AND R.NOME_FORM = %s AND PU.ACESSO = 1',
-      [AIDEmpresa, AIDUsuario, QuotedStrDB(ANomeForm)]);
+    RotinaID := 0;
+    SQL := Format('SELECT ID_ROTINA FROM ROTINA WHERE NOME_FORM = %s', [QuotedStrDB(ANomeForm)]);
+    ADODataSet.CommandText := SQL;
+    ADODataSet.Open;
+    if not ADODataSet.IsEmpty then
+      RotinaID := ADODataSet.FieldByName('ID_ROTINA').AsInteger;
+    ADODataSet.Close;
 
+    if RotinaID = 0 then Exit;
+
+    SQL := Format(
+      'SELECT NOME_PERMISSAO ' +
+      'FROM PERMISSAO_USUARIO ' +
+      'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND ID_ROTINA_REF = %d AND VALOR_PERMISSAO = ''S''',
+      [AIDEmpresa, AIDUsuario, RotinaID]
+    );
     ADODataSet.CommandText := SQL;
     ADODataSet.Open;
     if not ADODataSet.IsEmpty then
     begin
-      Result     := GetFieldAsBoolean(ADODataSet, 'ACESSO');
-      PInserir   := GetFieldAsBoolean(ADODataSet, 'P_INSERIR');
-      PAlterar   := GetFieldAsBoolean(ADODataSet, 'P_ALTERAR');
-      PExcluir   := GetFieldAsBoolean(ADODataSet, 'P_EXCLUIR');
-      PImprimir  := GetFieldAsBoolean(ADODataSet, 'P_IMPRIMIR');
+      while not ADODataSet.Eof do
+      begin
+        Dim NomePerm: string;
+        NomePerm := ADODataSet.FieldByName('NOME_PERMISSAO').AsString;
+        if SameText(NomePerm, 'ACESSO') then Result := True
+        else if SameText(NomePerm, 'P_INSERIR') then PInserir := True
+        else if SameText(NomePerm, 'P_ALTERAR') then PAlterar := True
+        else if SameText(NomePerm, 'P_EXCLUIR') then PExcluir := True
+        else if SameText(NomePerm, 'P_IMPRIMIR') then PImprimir := True;
+        ADODataSet.Next;
+      end;
+    end;
+
+    if not Result then
+    begin
+      PInserir := False; PAlterar := False; PExcluir := False; PImprimir := False;
     end;
   finally
     FreeAndNil(ADODataSet);
@@ -591,7 +717,7 @@ var
   SQL: string;
   ADODataSet: TADODataSet;
   IsAdmin: Boolean;
-  CampoItemFK: string;
+  ItemRefField: string;
 begin
   Result := False;
   PInserir := False; PAlterar := False; PExcluir := False; PImprimir := False;
@@ -618,35 +744,51 @@ begin
 
     if IsAdmin then
     begin
-      Result := True; PInserir := True; PAlterar := True; PExcluir := True; PImprimir := True;
+      Result := True;
+      if AItemTipo = 'R' then
+      begin
+        PInserir := True; PAlterar := True; PExcluir := True; PImprimir := True;
+      end;
       Exit;
     end;
 
     case AItemTipo of
-      'M': CampoItemFK := 'ID_MODULO_PERMITIDO';
-      'S': CampoItemFK := 'ID_SUBMODULO_PERMITIDO';
-      'R': CampoItemFK := 'ID_ROTINA_PERMITIDA';
-      else Exit;
+      'M': ItemRefField := 'ID_MODULO_REF';
+      'S': ItemRefField := 'ID_SUBMODULO_REF';
+      'R': ItemRefField := 'ID_ROTINA_REF';
+    else
+      Exit;
     end;
 
     SQL := Format(
-      'SELECT ACESSO, P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR ' +
+      'SELECT NOME_PERMISSAO ' +
       'FROM PERMISSAO_USUARIO ' +
-      'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s = %d AND ACESSO = 1',
-      [AIDEmpresa, AIDUsuario, CampoItemFK, AItemID]);
-
+      'WHERE ID_EMPRESA = %d AND ID_USUARIO = %d AND %s = %d AND VALOR_PERMISSAO = ''S''',
+      [AIDEmpresa, AIDUsuario, ItemRefField, AItemID]
+    );
     ADODataSet.CommandText := SQL;
     ADODataSet.Open;
     if not ADODataSet.IsEmpty then
     begin
-      Result     := GetFieldAsBoolean(ADODataSet, 'ACESSO');
-      if AItemTipo = 'R' then
+      while not ADODataSet.Eof do
       begin
-        PInserir   := GetFieldAsBoolean(ADODataSet, 'P_INSERIR');
-        PAlterar   := GetFieldAsBoolean(ADODataSet, 'P_ALTERAR');
-        PExcluir   := GetFieldAsBoolean(ADODataSet, 'P_EXCLUIR');
-        PImprimir  := GetFieldAsBoolean(ADODataSet, 'P_IMPRIMIR');
+        Dim NomePerm: string;
+        NomePerm := ADODataSet.FieldByName('NOME_PERMISSAO').AsString;
+        if SameText(NomePerm, 'ACESSO') then Result := True;
+        if AItemTipo = 'R' then
+        begin
+          if SameText(NomePerm, 'P_INSERIR') then PInserir := True
+          else if SameText(NomePerm, 'P_ALTERAR') then PAlterar := True
+          else if SameText(NomePerm, 'P_EXCLUIR') then PExcluir := True
+          else if SameText(NomePerm, 'P_IMPRIMIR') then PImprimir := True;
+        end;
+        ADODataSet.Next;
       end;
+    end;
+
+    if not Result then
+    begin
+      PInserir := False; PAlterar := False; PExcluir := False; PImprimir := False;
     end;
   finally
     FreeAndNil(ADODataSet);

@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Variants, Classes, Graphics, Controls, Forms,
   Dialogs, StdCtrls, ComCtrls, ExtCtrls, DBCtrls, DB, ActnList, ImgList, StrUtils,
-  uPermissaoController;
+  uPermissaoController, Generics.Collections; // Adicionado Generics.Collections
 
 type
   TItemMenuData = record
@@ -14,6 +14,20 @@ type
     NomeForm: string;
   end;
   PItemMenuData = ^TItemMenuData;
+
+  // Estrutura para armazenar o estado de uma permissão específica na UI (modificada ou não)
+  TUIPermissionState = record
+    NomePermissao: string; // 'ACESSO', 'P_INSERIR', etc.
+    Valor: Boolean;        // True se marcada, False se desmarcada
+    Modificada: Boolean;   // True se o usuário alterou o estado desta permissão
+  end;
+  TArrayOfUIPermissionState = array of TUIPermissionState;
+
+  // Dicionário para mapear um ItemID_ItemTipo para um array de estados de permissão da UI
+  // Chave: String (ex: 'R_101' para Rotina ID 101)
+  // Valor: TArrayOfUIPermissionState
+  TItemUIPermissions = TDictionary<string, TArrayOfUIPermissionState>;
+
 
   TfrmGerenciarPermissoes = class(TForm)
     pnlFiltros: TPanel;
@@ -54,25 +68,36 @@ type
   private
     { Private declarations }
     FPermissaoController: TPermissaoController;
-    FPermissoesModificadas: Boolean;
-    FEstadoAtualPermissoesUI: TStringList;
-    FPermissoesOriginais: TArrayOfUserPermissionItem;
+    FPermissoesModificadasGeral: Boolean; // Indica se QUALQUER permissão foi modificada
+
+    // FEstadoAtualPermissoesUI: TStringList; // Antigo, será substituído
+    // FPermissoesOriginais: TArrayOfUserPermissionItem; // Antigo, será substituído
+
+    // Novas estruturas para armazenar permissões
+    FPermissoesOriginaisCarregadas: TArrayOfSingleUserPermission; // Permissões como vieram do banco
+    FUIPermissionsState: TItemUIPermissions; // Estado atual das permissões na UI, incluindo modificações
 
     procedure CarregarEmpresas;
     procedure CarregarUsuarios(AIDEmpresa: Integer);
     procedure LimparPermissoesVisuais;
     procedure PopularTreeView;
-    procedure AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
-    procedure AtualizarChecksPermissaoParaNo(ANode: TTreeNode); // Assinatura corrigida
+    // procedure AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem); // Assinatura Antiga
+    procedure AplicarPermissoesCarregadasParaTodosNos(const AUserPermissions: TArrayOfSingleUserPermission);
+    procedure AtualizarChecksPermissaoParaNo(ANode: TTreeNode);
     function GetItemMenuData(ANode: TTreeNode): PItemMenuData;
     procedure SetItemMenuData(ANode: TTreeNode; AID: Integer; ATipo: Char; ANomeForm: string);
+    procedure InicializarEstadoUIParaNodeRecursivo(ANode: TTreeNode; const AOriginalPermissions: TArrayOfSingleUserPermission); // Auxiliar
 
-    procedure MarcarNoAtualizarListaEditada(ANodeData: PItemMenuData; ACheckedState: Boolean);
-    procedure AtualizarEstadoPermissaoUI(ANodeData: PItemMenuData; AAcesso, AInserir, AAlterar, AExcluir, AImprimir: Boolean); // Já estava correta
-    function GetEstadoPermissaoUI(ANodeData: PItemMenuData; out ValAcesso, ValInserir, ValAlterar, ValExcluir, ValImprimir: Boolean): Boolean;
 
-    procedure ProcessarNoParaSelecaoTotal(ANode: TTreeNode);
-    procedure ProcessarNoParaLimpezaTotal(ANode: TTreeNode);
+    // Novos métodos para gerenciar o estado da UI com TDictionary
+    procedure InicializarEstadoUIParaNode(ANode: TTreeNode; const AOriginalPermissions: TArrayOfSingleUserPermission);
+    procedure SetUIPermissionState(AItemTipo: Char; AItemID: Integer; ANomePermissao: string; AValor: Boolean; AModificada: Boolean);
+    function GetUIPermissionState(AItemTipo: Char; AItemID: Integer; ANomePermissao: string; out AValor: Boolean; out AModificada: Boolean): Boolean; // Adicionado AModificada
+    function GetNomePermissaoFromCheckBox(ACheckBox: TCheckBox): string;
+    procedure LimparTodosOsEstadosUIPermissions;
+
+    procedure ProcessarNoParaSelecaoTotal(ANode: TTreeNode; Selecionar: Boolean);
+    // procedure ProcessarNoParaLimpezaTotal(ANode: TTreeNode); // Será unificado com ProcessarNoParaSelecaoTotal
 
     function BoolToStrDB(Value: Boolean): string;
     function StrDBToBool(Value: string): Boolean;
@@ -113,12 +138,14 @@ begin
     MemoLog.Lines.Add('Conexão com BD bem-sucedida no FormCreate!');
   end;
 
-  FPermissoesModificadas := False;
-  FEstadoAtualPermissoesUI := TStringList.Create;
-  FEstadoAtualPermissoesUI.Sorted := True;
-  FEstadoAtualPermissoesUI.Duplicates := dupIgnore;
+  FPermissoesModificadasGeral := False;
+  // FEstadoAtualPermissoesUI := TStringList.Create; // Antigo
+  // FEstadoAtualPermissoesUI.Sorted := True;
+  // FEstadoAtualPermissoesUI.Duplicates := dupIgnore;
+  FUIPermissionsState := TItemUIPermissions.Create;
 
-  SetLength(FPermissoesOriginais, 0);
+
+  SetLength(FPermissoesOriginaisCarregadas, 0);
 
   tvMenu.ReadOnly := False;
   gbPermissoesItem.Enabled := False;
@@ -146,8 +173,9 @@ begin
     end;
   end;
   FreeAndNil(FPermissaoController);
-  FreeAndNil(FEstadoAtualPermissoesUI);
-  SetLength(FPermissoesOriginais, 0);
+  // FreeAndNil(FEstadoAtualPermissoesUI); // Antigo
+  FreeAndNil(FUIPermissionsState); // Novo
+  SetLength(FPermissoesOriginaisCarregadas, 0); // Novo
 end;
 
 procedure TfrmGerenciarPermissoes.FormShow(Sender: TObject);
@@ -297,9 +325,37 @@ begin
     btnCopiarPermissoes.Enabled := False;
   end;
   btnSalvarPermissoes.Enabled := False;
-  FPermissoesModificadas := False;
-  FEstadoAtualPermissoesUI.Clear;
-  SetLength(FPermissoesOriginais, 0);
+  FPermissoesModificadasGeral := False; // Modificado
+  // FEstadoAtualPermissoesUI.Clear; // Antigo
+  LimparTodosOsEstadosUIPermissions; // Novo
+  SetLength(FPermissoesOriginaisCarregadas, 0); // Modificado
+end;
+
+procedure TfrmGerenciarPermissoes.LimparTodosOsEstadosUIPermissions;
+var
+  Key: string;
+  StatesArray: TArrayOfUIPermissionState;
+begin
+  if Assigned(FUIPermissionsState) then
+  begin
+    // Para liberar a memória dos arrays internos antes de limpar o dicionário
+    for Key in FUIPermissionsState.Keys do
+    begin
+      StatesArray := FUIPermissionsState.Items[Key];
+      SetLength(StatesArray, 0); // Libera o array
+    end;
+    FUIPermissionsState.Clear;
+  end;
+end;
+
+procedure TfrmGerenciarPermissoes.GetNomePermissaoFromCheckBox(ACheckBox: TCheckBox): string;
+begin
+  Result := '';
+  if ACheckBox = chkAcesso then Result := 'ACESSO'
+  else if ACheckBox = chkInserir then Result := 'P_INSERIR'
+  else if ACheckBox = chkAlterar then Result := 'P_ALTERAR'
+  else if ACheckBox = chkExcluir then Result := 'P_EXCLUIR'
+  else if ACheckBox = chkImprimir then Result := 'P_IMPRIMIR';
 end;
 
 procedure TfrmGerenciarPermissoes.PopularTreeView;
@@ -424,64 +480,96 @@ begin
   btnSelecionarTodas.Enabled := (tvMenu.Items.Count > 0);
 end;
 
-procedure TfrmGerenciarPermissoes.AplicarPermissoesVisuaisParaNo(ANode: TTreeNode; const AUserPermissions: TArrayOfUserPermissionItem);
-var i: Integer; NodeData: PItemMenuData; PermItem: TUserPermissionItem;
-    TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
-    PermString, ChaveItem: string;
-    IdxCache: Integer;
+// Procedure AplicarPermissoesVisuaisParaNo - REMOVIDA E SUBSTITUÍDA
+// A lógica agora é:
+// 1. CarregarPermissoesUsuario -> FPermissoesOriginaisCarregadas
+// 2. PopularTreeView
+// 3. InicializarEstadoUIParaNode para cada nó (usa FPermissoesOriginaisCarregadas)
+// 4. AtualizarChecksPermissaoParaNo (usa FUIPermissionsState)
+
+procedure TfrmGerenciarPermissoes.AplicarPermissoesCarregadasParaTodosNos(const AUserPermissions: TArrayOfSingleUserPermission);
+var
+  i: Integer;
 begin
-  if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
-  NodeData := PItemMenuData(ANode.Data);
-  ChaveItem := NodeData^.Tipo + '_' + IntToStr(NodeData^.ID);
+  // Limpa o estado anterior da UI antes de aplicar as novas permissões carregadas
+  LimparTodosOsEstadosUIPermissions;
 
-  TemAcesso := False; PodeInserir := False; PodeAlterar := False;
-  PodeExcluir := False; PodeImprimir := False;
-
-  for PermItem in AUserPermissions do
+  // Itera sobre todos os nós do TreeView e inicializa seu estado de UI
+  // com base nas permissões carregadas do banco (AUserPermissions)
+  if Assigned(tvMenu.Items) then
   begin
-    if (PermItem.ItemID = NodeData^.ID) and (PermItem.ItemTipo = NodeData^.Tipo) then
-    begin
-      TemAcesso    := PermItem.Acesso;
-      PodeInserir  := PermItem.Inserir;
-      PodeAlterar  := PermItem.Alterar;
-      PodeExcluir  := PermItem.Excluir;
-      PodeImprimir := PermItem.Imprimir;
-      Break;
-    end;
+    for i := 0 to tvMenu.Items.Count - 1 do
+      InicializarEstadoUIParaNodeRecursivo(tvMenu.Items[i], AUserPermissions);
   end;
-
-  PermString := BoolToStrDB(TemAcesso) + '|' + BoolToStrDB(PodeInserir) + '|' +
-                BoolToStrDB(PodeAlterar) + '|' + BoolToStrDB(PodeExcluir) + '|' +
-                BoolToStrDB(PodeImprimir);
-
-  if FEstadoAtualPermissoesUI.Find(ChaveItem, IdxCache) then
-      FEstadoAtualPermissoesUI.ValueFromIndex[IdxCache] := PermString
-  else
-      FEstadoAtualPermissoesUI.Add(ChaveItem + '=' + PermString);
-
-
-  if ANode = tvMenu.Selected then
-  begin
-    chkAcesso.Checked := TemAcesso; gbPermissoesItem.Enabled := True;
-    if NodeData^.Tipo = 'R' then
-    begin
-      chkInserir.Enabled := True; chkInserir.Checked := PodeInserir;
-      chkAlterar.Enabled := True; chkAlterar.Checked := PodeAlterar;
-      chkExcluir.Enabled := True; chkExcluir.Checked := PodeExcluir;
-      chkImprimir.Enabled := True; chkImprimir.Checked := PodeImprimir;
-    end else begin
-      chkInserir.Enabled := False; chkInserir.Checked := False; chkAlterar.Enabled := False; chkAlterar.Checked := False;
-      chkExcluir.Enabled := False; chkExcluir.Checked := False; chkImprimir.Enabled := False; chkImprimir.Checked := False;
-    end;
-  end;
-
-  if ANode.HasChildren then
-    for i := 0 to ANode.Count - 1 do
-      AplicarPermissoesVisuaisParaNo(ANode.Item[i], AUserPermissions);
 end;
 
+// Função auxiliar recursiva para InicializarEstadoUIParaNode
+procedure TfrmGerenciarPermissoes.InicializarEstadoUIParaNodeRecursivo(ANode: TTreeNode; const AOriginalPermissions: TArrayOfSingleUserPermission);
+var
+  i: Integer;
+begin
+  if not Assigned(ANode) then Exit;
+  InicializarEstadoUIParaNode(ANode, AOriginalPermissions);
+  if ANode.HasChildren then
+    for i := 0 to ANode.Count - 1 do
+      InicializarEstadoUIParaNodeRecursivo(ANode.Item[i], AOriginalPermissions);
+end;
+
+procedure TfrmGerenciarPermissoes.InicializarEstadoUIParaNode(ANode: TTreeNode; const AOriginalPermissions: TArrayOfSingleUserPermission);
+var
+  NodeData: PItemMenuData;
+  NodeKey: string;
+  PermStateArray: TArrayOfUIPermissionState;
+  PermOriginal: TSingleUserPermission;
+  NomePerm: string;
+  ValorPerm: Boolean;
+  PermissoesPadrao: array[0..4] of string;
+  i: Integer;
+  Found: Boolean;
+begin
+  if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
+  NodeData := GetItemMenuData(ANode);
+  if not Assigned(NodeData) then Exit;
+
+  NodeKey := NodeData^.Tipo + '_' + IntToStr(NodeData^.ID);
+
+  PermissoesPadrao[0] := 'ACESSO';
+  PermissoesPadrao[1] := 'P_INSERIR';
+  PermissoesPadrao[2] := 'P_ALTERAR';
+  PermissoesPadrao[3] := 'P_EXCLUIR';
+  PermissoesPadrao[4] := 'P_IMPRIMIR';
+
+  SetLength(PermStateArray, Length(PermissoesPadrao));
+
+  for i := Low(PermissoesPadrao) to High(PermissoesPadrao) do
+  begin
+    NomePerm := PermissoesPadrao[i];
+    ValorPerm := False; // Default é False
+
+    // Procura a permissão nas originais carregadas
+    Found := False;
+    for PermOriginal in AOriginalPermissions do
+    begin
+      if (PermOriginal.ItemID = NodeData^.ID) and
+         (PermOriginal.ItemTipo = NodeData^.Tipo) and
+         (SameText(PermOriginal.NomePermissao, NomePerm)) then
+      begin
+        ValorPerm := PermOriginal.Valor;
+        Found := True;
+        Break;
+      end;
+    end;
+
+    PermStateArray[i].NomePermissao := NomePerm;
+    PermStateArray[i].Valor := ValorPerm;
+    PermStateArray[i].Modificada := False; // Inicialmente, nenhuma permissão da UI foi modificada pelo usuário
+  end;
+  FUIPermissionsState.AddOrSetValue(NodeKey, PermStateArray);
+end;
+
+
 procedure TfrmGerenciarPermissoes.btnCarregarPermissoesClick(Sender: TObject);
-var IDEmpresa, IDUsuario, i: Integer;
+var IDEmpresa, IDUsuario: Integer;
 begin
   MemoLog.Lines.Add('btnCarregarPermissoesClick iniciado.');
   if (cbEmpresa.ItemIndex = -1) or (cbUsuario.ItemIndex = -1) then
@@ -499,33 +587,38 @@ begin
   begin ShowMessage('Controller não inicializado.'); MemoLog.Lines.Add('Controller não inicializado em btnCarregarPermissoesClick.'); Exit; end;
 
   Screen.Cursor := crHourGlass;
-  FEstadoAtualPermissoesUI.Clear;
-  SetLength(FPermissoesOriginais, 0);
+  LimparTodosOsEstadosUIPermissions; // Limpa o estado da UI
+  SetLength(FPermissoesOriginaisCarregadas, 0); // Limpa as permissões originais antigas
   try
-    PopularTreeView;
+    PopularTreeView; // Popula o TreeView primeiro
 
-    if not FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, FPermissoesOriginais) then
+    // Carrega as permissões do usuário do banco
+    if not FPermissaoController.CarregarPermissoesUsuario(IDEmpresa, IDUsuario, FPermissoesOriginaisCarregadas) then
     begin
       ShowMessage('Falha ao carregar permissões do usuário.');
       MemoLog.Lines.Add(Format('FPermissaoController.CarregarPermissoesUsuario retornou False para Usuário ID %d.', [IDUsuario]));
       Screen.Cursor := crDefault;
       Exit;
     end;
-    MemoLog.Lines.Add(Format('Permissões ORIGINAIS carregadas para Usuário ID %d: %d registros.', [IDUsuario, Length(FPermissoesOriginais)]));
+    MemoLog.Lines.Add(Format('Permissões ORIGINAIS carregadas para Usuário ID %d: %d registros.', [IDUsuario, Length(FPermissoesOriginaisCarregadas)]));
 
+    // Aplica as permissões carregadas para inicializar o FUIPermissionsState
+    AplicarPermissoesCarregadasParaTodosNos(FPermissoesOriginaisCarregadas);
+
+    // Atualiza a UI (checkboxes) para o nó selecionado (ou o primeiro nó)
     if tvMenu.Items.Count > 0 then
     begin
-       for i := 0 to tvMenu.Items.Count -1 do
-          AplicarPermissoesVisuaisParaNo(tvMenu.Items[i], FPermissoesOriginais);
+       if not Assigned(tvMenu.Selected) and (tvMenu.Items.Count > 0) then
+         tvMenu.Selected := tvMenu.Items[0]; // Seleciona o primeiro nó se nenhum estiver selecionado
 
        if Assigned(tvMenu.Selected) then
-         AtualizarChecksPermissaoParaNo(tvMenu.Selected)
-       else if tvMenu.Items.Count > 0 then
-         tvMenu.Selected := tvMenu.Items[0];
-    end else LimparPermissoesVisuais;
+         AtualizarChecksPermissaoParaNo(tvMenu.Selected); // Atualiza os checkboxes para o nó agora selecionado
+    end else
+        LimparPermissoesVisuais; // Se não há itens no menu, limpa os checkboxes
+
   finally Screen.Cursor := crDefault; end;
 
-  FPermissoesModificadas := False;
+  FPermissoesModificadasGeral := False; // Reseta o indicador de modificações gerais
   btnSalvarPermissoes.Enabled := False;
   MemoLog.Lines.Add('btnCarregarPermissoesClick finalizado.');
 end;
@@ -541,10 +634,12 @@ begin
 end;
 
 procedure TfrmGerenciarPermissoes.AtualizarChecksPermissaoParaNo(ANode: TTreeNode);
-var NodeData: PItemMenuData;
-    TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir: Boolean;
-    PermItemOriginal: TUserPermissionItem;
-    FoundOriginal: Boolean;
+var
+  NodeData: PItemMenuData;
+  NodeKey: string;
+  PermStateArray: TArrayOfUIPermissionState;
+  PermUIState: TUIPermissionState;
+  ValorAcesso, ValorInserir, ValorAlterar, ValorExcluir, ValorImprimir: Boolean;
 begin
   LimparPermissoesVisuais;
   if not Assigned(ANode) or not Assigned(ANode.Data) then Exit;
@@ -553,39 +648,48 @@ begin
 
   gbPermissoesItem.Enabled := True;
   gbPermissoesItem.Caption := 'Permissões para: ' + ANode.Text;
+  NodeKey := NodeData^.Tipo + '_' + IntToStr(NodeData^.ID);
 
-  // Tenta obter do estado editado primeiro (FEstadoAtualPermissoesUI)
-  if not GetEstadoPermissaoUI(NodeData, TemAcesso, PodeInserir, PodeAlterar, PodeExcluir, PodeImprimir) then
+  ValorAcesso := False; ValorInserir := False; ValorAlterar := False;
+  ValorExcluir := False; ValorImprimir := False;
+
+  if FUIPermissionsState.TryGetValue(NodeKey, PermStateArray) then
   begin
-    // Se não foi editado, pega das permissões originais carregadas (FPermissoesOriginais)
-    FoundOriginal := False;
-    for PermItemOriginal in FPermissoesOriginais do
+    for PermUIState in PermStateArray do
     begin
-      if (PermItemOriginal.ItemID = NodeData^.ID) and (PermItemOriginal.ItemTipo = NodeData^.Tipo) then
-      begin
-        TemAcesso    := PermItemOriginal.Acesso; PodeInserir  := PermItemOriginal.Inserir;
-        PodeAlterar  := PermItemOriginal.Alterar; PodeExcluir  := PermItemOriginal.Excluir;
-        PodeImprimir := PermItemOriginal.Imprimir;
-        FoundOriginal := True; // Hint H2077: Value assigned to 'FoundOriginal' never used - REMOVIDO
-        Break;
-      end;
+      if SameText(PermUIState.NomePermissao, 'ACESSO') then ValorAcesso := PermUIState.Valor
+      else if SameText(PermUIState.NomePermissao, 'P_INSERIR') then ValorInserir := PermUIState.Valor
+      else if SameText(PermUIState.NomePermissao, 'P_ALTERAR') then ValorAlterar := PermUIState.Valor
+      else if SameText(PermUIState.NomePermissao, 'P_EXCLUIR') then ValorExcluir := PermUIState.Valor
+      else if SameText(PermUIState.NomePermissao, 'P_IMPRIMIR') then ValorImprimir := PermUIState.Valor;
     end;
-    // Se não encontrou no original, todas as permissões são False (estado padrão de LimparPermissoesVisuais)
   end;
+  // Se não encontrou no FUIPermissionsState, os valores default (False) são usados,
+  // o que é correto pois InicializarEstadoUIParaNode já tratou as permissões originais.
 
-  chkAcesso.Checked := TemAcesso;
-  if NodeData^.Tipo = 'R' then
+  chkAcesso.Checked := ValorAcesso;
+  // Habilita/desabilita e marca sub-permissões com base no tipo de item e na permissão de acesso
+  if NodeData^.Tipo = 'R' then // Rotinas podem ter sub-permissões
   begin
-    chkInserir.Enabled := True; chkInserir.Checked := PodeInserir;
-    chkAlterar.Enabled := True; chkAlterar.Checked := PodeAlterar;
-    chkExcluir.Enabled := True; chkExcluir.Checked := PodeExcluir;
-    chkImprimir.Enabled := True; chkImprimir.Checked := PodeImprimir;
-  end else begin
-    chkInserir.Enabled := False; chkInserir.Checked := False;
-    chkAlterar.Enabled := False; chkAlterar.Checked := False;
-    chkExcluir.Enabled := False; chkExcluir.Checked := False;
+    chkInserir.Enabled  := ValorAcesso; // Sub-permissões só habilitadas se Acesso = True
+    chkAlterar.Enabled  := ValorAcesso;
+    chkExcluir.Enabled  := ValorAcesso;
+    chkImprimir.Enabled := ValorAcesso;
+
+    chkInserir.Checked  := ValorAcesso and ValorInserir; // Marcado apenas se Acesso E a própria sub-permissão forem True
+    chkAlterar.Checked  := ValorAcesso and ValorAlterar;
+    chkExcluir.Checked  := ValorAcesso and ValorExcluir;
+    chkImprimir.Checked := ValorAcesso and ValorImprimir;
+  end
+  else // Módulos e Submódulos não têm sub-permissões diretamente editáveis aqui
+  begin
+    chkInserir.Enabled  := False; chkInserir.Checked  := False;
+    chkAlterar.Enabled  := False; chkAlterar.Checked  := False;
+    chkExcluir.Enabled  := False; chkExcluir.Checked  := False;
     chkImprimir.Enabled := False; chkImprimir.Checked := False;
   end;
+  // O GroupBox de permissões está habilitado se um nó estiver selecionado.
+  // A habilitação individual dos checkboxes de sub-permissão é controlada acima.
 end;
 
 procedure TfrmGerenciarPermissoes.tvMenuSelectionChanged(Sender: TObject);
@@ -603,205 +707,245 @@ begin
   end;
 end;
 
-procedure TfrmGerenciarPermissoes.AtualizarEstadoPermissaoUI(ANodeData: PItemMenuData;
-  AAcesso, AInserir, AAlterar, AExcluir, AImprimir: Boolean);
+// procedure TfrmGerenciarPermissoes.AtualizarEstadoPermissaoUI - REMOVIDO E SUBSTITUIDO por SetUIPermissionState
+// function TfrmGerenciarPermissoes.GetEstadoPermissaoUI - REMOVIDO E SUBSTITUIDO por GetUIPermissionState
+// procedure TfrmGerenciarPermissoes.MarcarNoAtualizarListaEditada - REMOVIDO, lógica integrada em chkPermissaoClick
+
+
+procedure TfrmGerenciarPermissoes.SetUIPermissionState(AItemTipo: Char; AItemID: Integer; ANomePermissao: string; AValor: Boolean; AModificada: Boolean);
 var
-  ChaveItem, PermString: string;
-  Idx: Integer;
+  NodeKey: string;
+  PermStateArray: TArrayOfUIPermissionState;
+  i: Integer;
+  Found: Boolean;
 begin
-  if not Assigned(ANodeData) then Exit;
-  ChaveItem := ANodeData^.Tipo + '_' + IntToStr(ANodeData^.ID);
-  PermString := BoolToStrDB(AAcesso) + '|' + BoolToStrDB(AInserir) + '|' +
-                BoolToStrDB(AAlterar) + '|' + BoolToStrDB(AExcluir) + '|' +
-                BoolToStrDB(AImprimir);
+  NodeKey := AItemTipo + '_' + IntToStr(AItemID);
+  Found := False;
 
-  if FEstadoAtualPermissoesUI.Find(ChaveItem, Idx) then
-    FEstadoAtualPermissoesUI.ValueFromIndex[Idx] := PermString
-  else
-    FEstadoAtualPermissoesUI.Add(ChaveItem + '=' + PermString);
+  if FUIPermissionsState.TryGetValue(NodeKey, PermStateArray) then
+  begin
+    for i := Low(PermStateArray) to High(PermStateArray) do
+    begin
+      if SameText(PermStateArray[i].NomePermissao, ANomePermissao) then
+      begin
+        PermStateArray[i].Valor := AValor;
+        PermStateArray[i].Modificada := AModificada or PermStateArray[i].Modificada; // Se já estava modificada, mantém true
+        FUIPermissionsState.AddOrSetValue(NodeKey, PermStateArray); // Reatribui para garantir atualização no Dictionary
+        Found := True;
+        Break;
+      end;
+    end;
+  end;
 
-  FPermissoesModificadas := True;
-  btnSalvarPermissoes.Enabled := True;
+  if not Found then // Deveria ter sido inicializado em AplicarPermissoesCarregadas
+  begin
+    // Isso não deveria acontecer se InicializarEstadoUIParaNode foi chamado corretamente.
+    // Mas, como fallback, podemos adicionar:
+    SetLength(PermStateArray, 1); // Cria um novo array se não existia (improvável)
+    PermStateArray[0].NomePermissao := ANomePermissao;
+    PermStateArray[0].Valor := AValor;
+    PermStateArray[0].Modificada := AModificada;
+    FUIPermissionsState.AddOrSetValue(NodeKey, PermStateArray);
+    MemoLog.Lines.Add(Format('AVISO: Permissão %s para %s não encontrada em FUIPermissionsState. Criada dinamicamente.', [ANomePermissao, NodeKey]));
+  end;
+
+  if AModificada then
+  begin
+    FPermissoesModificadasGeral := True;
+    btnSalvarPermissoes.Enabled := True;
+  end;
 end;
 
-function TfrmGerenciarPermissoes.GetEstadoPermissaoUI(ANodeData: PItemMenuData;
-  out ValAcesso, ValInserir, ValAlterar, ValExcluir, ValImprimir: Boolean): Boolean;
+function TfrmGerenciarPermissoes.GetUIPermissionState(AItemTipo: Char; AItemID: Integer; ANomePermissao: string; out AValor: Boolean; out AModificada: Boolean): Boolean;
 var
-  ChaveItem, PermStringValores: string;
-  Idx: Integer;
-  PermInfo: TStringList;
+  NodeKey: string;
+  PermStateArray: TArrayOfUIPermissionState;
+  PermState: TUIPermissionState;
 begin
-  Result := False;
-  ValAcesso := False; ValInserir := False; ValAlterar := False; ValExcluir := False; ValImprimir := False;
+  Result := False; // Indica se a permissão foi encontrada no array
+  AValor := False;
+  AModificada := False;
+  NodeKey := AItemTipo + '_' + IntToStr(AItemID);
 
-  if not Assigned(ANodeData) then Exit;
-  ChaveItem := ANodeData^.Tipo + '_' + IntToStr(ANodeData^.ID);
-
-  if FEstadoAtualPermissoesUI.Find(ChaveItem, Idx) then
+  if FUIPermissionsState.TryGetValue(NodeKey, PermStateArray) then
   begin
-    PermStringValores := FEstadoAtualPermissoesUI.ValueFromIndex[Idx];
-    PermInfo := TStringList.Create;
-    try
-      PermInfo.Delimiter := '|';
-      PermInfo.DelimitedText := PermStringValores;
-      if PermInfo.Count = 5 then
+    for PermState in PermStateArray do
+    begin
+      if SameText(PermState.NomePermissao, ANomePermissao) then
       begin
-        ValAcesso    := StrDBToBool(PermInfo[0]);
-        ValInserir   := StrDBToBool(PermInfo[1]);
-        ValAlterar   := StrDBToBool(PermInfo[2]);
-        ValExcluir   := StrDBToBool(PermInfo[3]);
-        ValImprimir  := StrDBToBool(PermInfo[4]);
+        AValor := PermState.Valor;
+        AModificada := PermState.Modificada;
         Result := True;
+        Exit;
       end;
-    finally
-      PermInfo.Free;
     end;
   end;
 end;
 
-
-procedure TfrmGerenciarPermissoes.MarcarNoAtualizarListaEditada(ANodeData: PItemMenuData; ACheckedState: Boolean);
-var ValAcesso, ValInserir, ValAlterar, ValExcluir, ValImprimir: Boolean;
-begin
-  if not Assigned(ANodeData) then Exit;
-
-  ValAcesso := ACheckedState;
-
-  if ANodeData^.Tipo = 'R' then
-  begin
-    ValInserir  := ValAcesso and chkInserir.Checked;
-    ValAlterar  := ValAcesso and chkAlterar.Checked;
-    ValExcluir  := ValAcesso and chkExcluir.Checked;
-    ValImprimir := ValAcesso and chkImprimir.Checked;
-  end else
-  begin
-    ValInserir := False; ValAlterar := False; ValExcluir := False; ValImprimir := False;
-  end;
-  AtualizarEstadoPermissaoUI(ANodeData, ValAcesso, ValInserir, ValAlterar, ValExcluir, ValImprimir);
-end;
-
 procedure TfrmGerenciarPermissoes.chkPermissaoClick(Sender: TObject);
-var NodeData: PItemMenuData;
+var
+  NodeData: PItemMenuData;
+  CheckBox: TCheckBox;
+  NomePermissaoClicada: string;
+  NovoValor: Boolean;
+  ValorAcessoAtual: Boolean;
+  DummyModificada: Boolean; // Não precisamos do estado de modificação aqui
 begin
   if not Assigned(tvMenu.Selected) then Exit;
   NodeData := GetItemMenuData(tvMenu.Selected);
   if not Assigned(NodeData) then Exit;
 
-  FPermissoesModificadas := True;
-  btnSalvarPermissoes.Enabled := True;
+  CheckBox := TCheckBox(Sender);
+  NomePermissaoClicada := GetNomePermissaoFromCheckBox(CheckBox);
+  NovoValor := CheckBox.Checked;
 
-  MarcarNoAtualizarListaEditada(NodeData, chkAcesso.Checked);
+  // Define o estado da permissão clicada
+  SetUIPermissionState(NodeData^.Tipo, NodeData^.ID, NomePermissaoClicada, NovoValor, True);
+
+  // Se o checkbox de Acesso foi alterado, precisamos reavaliar a habilitação e o estado
+  // dos checkboxes de sub-permissões (Inserir, Alterar, Excluir, Imprimir)
+  if CheckBox = chkAcesso then
+  begin
+    // Atualiza os checkboxes visuais com base no novo estado de Acesso
+    // e os valores atuais das sub-permissões no FUIPermissionsState.
+    AtualizarChecksPermissaoParaNo(tvMenu.Selected);
+  end
+  else // Se um checkbox de sub-permissão foi alterado
+  begin
+    // Garante que, se uma sub-permissão for marcada, a permissão de Acesso também seja
+    // considerada como marcada no estado da UI (se ainda não estiver).
+    if NovoValor then // Se P_INSERIR (ou outra) foi marcada para True
+    begin
+      // Verifica o estado atual de ACESSO
+      if GetUIPermissionState(NodeData^.Tipo, NodeData^.ID, 'ACESSO', ValorAcessoAtual, DummyModificada) then
+      begin
+        if not ValorAcessoAtual then // Se ACESSO estava False
+        begin
+          SetUIPermissionState(NodeData^.Tipo, NodeData^.ID, 'ACESSO', True, True);
+          chkAcesso.Checked := True; // Atualiza visualmente
+          // Re-habilita sub-checkboxes pois Acesso agora é True
+          AtualizarChecksPermissaoParaNo(tvMenu.Selected);
+        end;
+      end;
+    end;
+  end;
+
+  FPermissoesModificadasGeral := True;
+  btnSalvarPermissoes.Enabled := True;
 end;
 
 procedure TfrmGerenciarPermissoes.btnSalvarPermissoesClick(Sender: TObject);
 var
   IDEmpresa, IDUsuario: Integer;
-  PermInfo: TStringList;
-  PermStringValores, ChaveItem : string;
-  PermissoesParaSalvar: TArrayOfUserPermissionItem;
-  idx, CountAlteradas: Integer;
-  NodeTipo: Char; NodeID: Integer;
-  PermItemOriginal: TUserPermissionItem;
-  OriginalAcesso, OriginalInserir, OriginalAlterar, OriginalExcluir, OriginalImprimir: Boolean;
-  EditadoAcesso, EditadoInserir, EditadoAlterar, EditadoExcluir, EditadoImprimir: Boolean;
-  EncontrouOriginal, HouveMudanca: Boolean;
+  PermissoesParaSalvar: TArrayOfSingleUserPermission;
+  NodeKey: string;
+  ItemTipo: Char;
+  ItemID: Integer;
+  PermStateArray: TArrayOfUIPermissionState;
+  PermUIState: TUIPermissionState;
+  CountAlteradas: Integer;
+  OriginalValue, CurrentValue, WasModified: Boolean;
+  OriginalPerm: TSingleUserPermission;
+  FoundOriginal: Boolean;
+  j: Integer;
 begin
-  if not FPermissoesModificadas then begin ShowMessage('Nenhuma permissão foi alterada.'); Exit; end;
-  if (cbEmpresa.ItemIndex = -1) or (cbUsuario.ItemIndex = -1) then begin ShowMessage('Selecione uma empresa e um usuário.'); Exit; end;
+  if not FPermissoesModificadasGeral then
+  begin
+    ShowMessage('Nenhuma permissão foi alterada.');
+    Exit;
+  end;
+
+  if (cbEmpresa.ItemIndex = -1) or (cbUsuario.ItemIndex = -1) then
+  begin
+    ShowMessage('Selecione uma empresa e um usuário.');
+    Exit;
+  end;
 
   IDEmpresa := Integer(cbEmpresa.Items.Objects[cbEmpresa.ItemIndex]);
   IDUsuario := Integer(cbUsuario.Items.Objects[cbUsuario.ItemIndex]);
 
   if not Assigned(FPermissaoController) then
-  begin ShowMessage('Controller não inicializado.'); Exit; end;
+  begin
+    ShowMessage('Controller de permissão não inicializado.');
+    Exit;
+  end;
 
   Screen.Cursor := crHourGlass;
   MemoLog.Lines.Add(Format('--- Iniciando salvamento para Usuário ID: %d, Empresa ID: %d ---', [IDUsuario, IDEmpresa]));
-
   SetLength(PermissoesParaSalvar, 0);
   CountAlteradas := 0;
-  PermInfo := TStringList.Create;
+
   try
-    for idx := 0 to FEstadoAtualPermissoesUI.Count - 1 do
+    // Iterar sobre o FUIPermissionsState para encontrar permissões modificadas
+    for NodeKey in FUIPermissionsState.Keys do
     begin
-      ChaveItem := FEstadoAtualPermissoesUI.Names[idx];
-      PermStringValores := FEstadoAtualPermissoesUI.ValueFromIndex[idx];
+      ItemTipo := NodeKey[1];
+      ItemID   := StrToInt(Copy(NodeKey, 3, Length(NodeKey) - 2));
+      PermStateArray := FUIPermissionsState.Items[NodeKey];
 
-      PermInfo.Delimiter := '|'; PermInfo.DelimitedText := PermStringValores;
-      if PermInfo.Count = 5 then
+      for PermUIState in PermStateArray do
       begin
-        NodeTipo := ChaveItem[1];
-        NodeID   := StrToInt(Copy(ChaveItem, 3, Length(ChaveItem)-2));
-
-        EditadoAcesso   := StrDBToBool(PermInfo[0]);
-        EditadoInserir  := StrDBToBool(PermInfo[1]);
-        EditadoAlterar  := StrDBToBool(PermInfo[2]);
-        EditadoExcluir  := StrDBToBool(PermInfo[3]);
-        EditadoImprimir := StrDBToBool(PermInfo[4]);
-
-        OriginalAcesso := False; OriginalInserir := False; OriginalAlterar := False; OriginalExcluir := False; OriginalImprimir := False;
-        EncontrouOriginal := False;
-        for PermItemOriginal in FPermissoesOriginais do
+        if PermUIState.Modificada then // Apenas considera as que o usuário alterou na UI
         begin
-          if (PermItemOriginal.ItemID = NodeID) and (PermItemOriginal.ItemTipo = NodeTipo) then
+          // Precisamos comparar com o valor original carregado do banco
+          OriginalValue := False; // Default se não encontrar no original (deveria encontrar)
+          FoundOriginal := False;
+          for OriginalPerm in FPermissoesOriginaisCarregadas do
           begin
-            OriginalAcesso := PermItemOriginal.Acesso; OriginalInserir := PermItemOriginal.Inserir;
-            OriginalAlterar := PermItemOriginal.Alterar; OriginalExcluir := PermItemOriginal.Excluir;
-            OriginalImprimir := PermItemOriginal.Imprimir;
-            EncontrouOriginal := True;
-            Break;
+            if (OriginalPerm.ItemTipo = ItemTipo) and
+               (OriginalPerm.ItemID = ItemID) and
+               (SameText(OriginalPerm.NomePermissao, PermUIState.NomePermissao)) then
+            begin
+              OriginalValue := OriginalPerm.Valor;
+              FoundOriginal := True;
+              Break;
+            end;
           end;
-        end;
 
-        HouveMudanca := (EditadoAcesso <> OriginalAcesso) or
-                        (EditadoInserir <> OriginalInserir) or
-                        (EditadoAlterar <> OriginalAlterar) or
-                        (EditadoExcluir <> OriginalExcluir) or
-                        (EditadoImprimir <> OriginalImprimir);
+          // Se não encontrou no original, mas foi modificada, significa que era False e agora pode ser True.
+          // Ou se encontrou e o valor mudou.
+          if (not FoundOriginal and PermUIState.Valor) or (FoundOriginal and (PermUIState.Valor <> OriginalValue)) then
+          begin
+            SetLength(PermissoesParaSalvar, CountAlteradas + 1);
+            PermissoesParaSalvar[CountAlteradas].ItemTipo := ItemTipo;
+            PermissoesParaSalvar[CountAlteradas].ItemID   := ItemID;
+            PermissoesParaSalvar[CountAlteradas].NomePermissao := PermUIState.NomePermissao;
+            PermissoesParaSalvar[CountAlteradas].Valor   := PermUIState.Valor;
+            Inc(CountAlteradas);
 
-        if not EncontrouOriginal and (EditadoAcesso or EditadoInserir or EditadoAlterar or EditadoExcluir or EditadoImprimir) then
-           HouveMudanca := True;
-
-        if HouveMudanca then
-        begin
-          SetLength(PermissoesParaSalvar, CountAlteradas + 1);
-          PermissoesParaSalvar[CountAlteradas].ItemTipo := NodeTipo;
-          PermissoesParaSalvar[CountAlteradas].ItemID   := NodeID;
-          PermissoesParaSalvar[CountAlteradas].Acesso   := EditadoAcesso;
-          PermissoesParaSalvar[CountAlteradas].Inserir  := EditadoInserir;
-          PermissoesParaSalvar[CountAlteradas].Alterar  := EditadoAlterar;
-          PermissoesParaSalvar[CountAlteradas].Excluir  := EditadoExcluir;
-          PermissoesParaSalvar[CountAlteradas].Imprimir := EditadoImprimir;
-          Inc(CountAlteradas);
-          MemoLog.Lines.Add(Format('ALTERADA: Tipo:%s ID:%d Ac:%s I:%s A:%s E:%s P:%s',
-             [NodeTipo, NodeID, PermInfo[0], PermInfo[1], PermInfo[2], PermInfo[3], PermInfo[4]]));
+            MemoLog.Lines.Add(Format('ALTERADA: Item %s, ID %d, Perm: %s, Novo Valor: %s (Original: %s)',
+              [ItemTipo, ItemID, PermUIState.NomePermissao, BoolToStrDB(PermUIState.Valor), BoolToStrDB(OriginalValue)]));
+          end;
         end;
       end;
     end;
 
     if Length(PermissoesParaSalvar) > 0 then
     begin
-      if FPermissaoController.AtualizarPermissoesEspecificas(IDEmpresa, IDUsuario, PermissoesParaSalvar) then
+      if FPermissaoController.SalvarPermissoesAlteradas(IDEmpresa, IDUsuario, PermissoesParaSalvar) then
       begin
-        FPermissoesModificadas := False;
+        FPermissoesModificadasGeral := False;
         btnSalvarPermissoes.Enabled := False;
         ShowMessage('Permissões alteradas salvas com sucesso.');
         MemoLog.Lines.Add('Permissões alteradas salvas via Controller.');
+        // Recarregar as permissões para refletir o estado atual do banco e resetar 'Modificada'
         btnCarregarPermissoesClick(nil);
-      end else
+      end
+      else
       begin
         ShowMessage('Falha ao salvar permissões alteradas via Controller.');
         MemoLog.Lines.Add('Falha ao salvar permissões alteradas via Controller.');
       end;
-    end else
+    end
+    else
     begin
-        ShowMessage('Nenhuma permissão foi efetivamente alterada para salvar.');
-        FPermissoesModificadas := False;
-        btnSalvarPermissoes.Enabled := False;
+      ShowMessage('Nenhuma permissão foi efetivamente alterada para salvar (comparado ao estado original).');
+      FPermissoesModificadasGeral := False;
+      btnSalvarPermissoes.Enabled := False;
+       MemoLog.Lines.Add('Nenhuma alteração efetiva detectada para salvar.');
     end;
 
   finally
-    PermInfo.Free;
     Screen.Cursor := crDefault;
   end;
   MemoLog.Lines.Add('--- Fim do salvamento ---');
@@ -918,17 +1062,76 @@ begin
   if MessageDlg('Deseja realmente limpar TODAS as permissões para o usuário selecionado (apenas visualmente)?'+
                 #13#10'As alterações só serão efetivadas ao Salvar.', mtConfirmation, [mbYes, mbNo], 0) = mrNo then Exit;
 
-  for i := 0 to tvMenu.Items.Count - 1 do ProcessarNoParaLimpezaTotal(tvMenu.Items[i]);
+  for i := 0 to tvMenu.Items.Count - 1 do
+    ProcessarNoParaSelecaoOuLimpeza(tvMenu.Items[i], False); // False para Limpar
 
-  // Atualiza a UI para o nó selecionado após a limpeza de FEstadoAtualPermissoesUI
   if Assigned(tvMenu.Selected) then
     AtualizarChecksPermissaoParaNo(tvMenu.Selected)
+  else if tvMenu.Items.Count > 0 then
+  begin
+    tvMenu.Selected := tvMenu.Items[0]; // Seleciona o primeiro para atualizar a UI
+    AtualizarChecksPermissaoParaNo(tvMenu.Items[0]);
+  end
   else
     LimparPermissoesVisuais;
 
-  FPermissoesModificadas := True; btnSalvarPermissoes.Enabled := True;
+  FPermissoesModificadasGeral := True;
+  btnSalvarPermissoes.Enabled := True;
   ShowMessage('Todas as permissões foram desmarcadas visualmente. Clique em Salvar para aplicar.');
   MemoLog.Lines.Add('Botão Limpar Todas clicado.');
+end;
+
+
+procedure TfrmGerenciarPermissoes.ProcessarNoParaSelecaoOuLimpeza(ANode: TTreeNode; ASelecionar: Boolean);
+var
+  j: Integer;
+  NodeData: PItemMenuData;
+  PermNome: string;
+  ValorAplicar: Boolean;
+  PermissoesNomes: array[0..4] of string;
+  k: Integer;
+begin
+  if not Assigned(ANode) then Exit;
+  NodeData := GetItemMenuData(ANode);
+  if not Assigned(NodeData) then Exit;
+
+  PermissoesNomes[0] := 'ACESSO';
+  PermissoesNomes[1] := 'P_INSERIR';
+  PermissoesNomes[2] := 'P_ALTERAR';
+  PermissoesNomes[3] := 'P_EXCLUIR';
+  PermissoesNomes[4] := 'P_IMPRIMIR';
+
+  for k := Low(PermissoesNomes) to High(PermissoesNomes) do
+  begin
+    PermNome := PermissoesNomes[k];
+
+    // Define o valor base (True para selecionar, False para limpar)
+    ValorAplicar := ASelecionar;
+
+    // Lógica específica para ACESSO e sub-permissões
+    if PermNome = 'ACESSO' then
+    begin
+      // Para ACESSO, o valor é diretamente ASelecionar (True para selecionar, False para limpar)
+      SetUIPermissionState(NodeData^.Tipo, NodeData^.ID, PermNome, ASelecionar, True);
+    end
+    else // Para P_INSERIR, P_ALTERAR, P_EXCLUIR, P_IMPRIMIR
+    begin
+      if NodeData^.Tipo = 'R' then // Sub-permissões só se aplicam a Rotinas
+      begin
+        // Se estamos selecionando tudo (ASelecionar = True), então todas as sub-permissões da rotina também são True.
+        // Se estamos limpando tudo (ASelecionar = False), então todas as sub-permissões da rotina também são False.
+        SetUIPermissionState(NodeData^.Tipo, NodeData^.ID, PermNome, ASelecionar, True);
+      end
+      else // Para Módulos e Submódulos, as sub-permissões são sempre False e não são "modificadas" por esta ação em massa.
+      begin
+        SetUIPermissionState(NodeData^.Tipo, NodeData^.ID, PermNome, False, False);
+      end;
+    end;
+  end;
+
+  // Processa filhos recursivamente
+  for j := 0 to ANode.Count - 1 do
+    ProcessarNoParaSelecaoOuLimpeza(ANode.Item[j], ASelecionar);
 end;
 
 procedure TfrmGerenciarPermissoes.btnSelecionarTodasClick(Sender: TObject);
@@ -939,11 +1142,16 @@ begin
                 #13#10'Para Rotinas, todas as sub-permissões também serão marcadas.'+
                 #13#10'As alterações só serão efetivadas ao Salvar.', mtConfirmation, [mbYes, mbNo], 0) = mrNo then Exit;
 
-  for i := 0 to tvMenu.Items.Count - 1 do ProcessarNoParaSelecaoTotal(tvMenu.Items[i]);
+  for i := 0 to tvMenu.Items.Count - 1 do
+    ProcessarNoParaSelecaoTotal(tvMenu.Items[i], True); // True para Selecionar
 
-  // Atualiza a UI para o nó selecionado após FEstadoAtualPermissoesUI ser preenchido
   if Assigned(tvMenu.Selected) then
     AtualizarChecksPermissaoParaNo(tvMenu.Selected);
+  else if tvMenu.Items.Count > 0 then // Se nada estiver selecionado, mas há itens, atualize o primeiro
+  begin
+    tvMenu.Selected := tvMenu.Items[0];
+    AtualizarChecksPermissaoParaNo(tvMenu.Items[0]);
+  end;
 
   FPermissoesModificadas := True; btnSalvarPermissoes.Enabled := True;
   ShowMessage('Todas as permissões foram marcadas visualmente. Clique em Salvar para aplicar.');
